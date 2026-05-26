@@ -1,28 +1,49 @@
 <template>
   <div class="container" style="container-type:inline-size;">
-    <h1 class="mb-4 title">上传包裹</h1>
+    <PageHeader title="上传包裹" subtitle="保持录入区轻一点，只强调输入本身，不再用大外框包整块表单。" />
 
-    <!-- 信息表单（无边框，窄版居中） -->
     <section class="mb-4 max-w-3xl mx-auto">
-      <div class="toolbar grid gap-3 md:grid-cols-2">
+      <div class="upload-form">
         <template v-if="role!=='customer'">
-          <input v-model.number="customer_id" class="input" placeholder="customer_id（示例 1）" type="number" min="1" aria-label="customer_id"/>
-        </template>
-        <template v-else>
-          <div class="text-sm md:col-span-2" style="display:flex; align-items:center; gap:8px;">
-            <span class="opacity-70">客户 ID</span>
-            <span class="badge badge-info" style="padding:2px 6px; border:1px solid var(--border); border-radius:8px;">{{ effectiveCustomerId }}</span>
+          <div class="field-row">
+            <label class="field-label">客户 ID</label>
+            <input v-model.number="customer_id" class="input" placeholder="示例 1" type="number" min="1" aria-label="customer_id"/>
           </div>
         </template>
-        <input v-model.trim="tracking_number" class="input" placeholder="tracking_number（唯一）" aria-label="tracking_number"/>
-        <input v-model.trim="courier_company" class="input" placeholder="courier_company（如 SF）" aria-label="courier_company"/>
-        <input v-model.trim="item_category" class="input" placeholder="item_category（如 化妆品）" aria-label="item_category"/>
-        <input v-model.trim="item_description" class="input md:col-span-2" placeholder="item_description（物品描述）" aria-label="item_description"/>
-        <input v-model.trim="note" class="input md:col-span-2" placeholder="note（备注，可选）" aria-label="note"/>
+        <template v-else>
+          <div class="field-row customer-pill">
+            <label class="field-label">客户 ID</label>
+            <div style="display:flex; align-items:center; gap:8px;">
+            <span class="opacity-70">客户 ID</span>
+            <span class="badge badge-info">{{ effectiveCustomerId }}</span>
+            </div>
+          </div>
+        </template>
+        <div class="field-row">
+          <label class="field-label">运单号</label>
+          <input v-model.trim="tracking_number" class="input" placeholder="唯一运单号" aria-label="tracking_number"/>
+        </div>
+        <div class="field-row field-grid">
+          <div>
+            <label class="field-label">快递公司</label>
+            <input v-model.trim="courier_company" class="input" placeholder="如 SF" aria-label="courier_company"/>
+          </div>
+          <div>
+            <label class="field-label">品类</label>
+            <input v-model.trim="item_category" class="input" placeholder="如 化妆品" aria-label="item_category"/>
+          </div>
+        </div>
+        <div class="field-row">
+          <label class="field-label">物品描述</label>
+          <input v-model.trim="item_description" class="input" placeholder="填写物品描述" aria-label="item_description"/>
+        </div>
+        <div class="field-row">
+          <label class="field-label">备注</label>
+          <input v-model.trim="note" class="input" placeholder="可选备注" aria-label="note"/>
+        </div>
       </div>
 
-      <!-- 图片选择（内嵌在表单下方，提示上方） -->
-      <div class="mt-4 mb-2">
+      <div class="upload-meta">
         <div style="display:flex; align-items:center; gap:10px;">
           <label for="filePick" class="btn btn-primary" style="cursor:pointer;">选择图片</label>
           <span class="text-xs opacity-70">已选择 {{ files.length }} 张（可选，最多 5 张）</span>
@@ -33,7 +54,7 @@
         </ul>
       </div>
 
-      <div class="text-xs opacity-70" style="margin-top:5px;">提示：tracking_number 需唯一；图片可选。</div>
+      <div class="text-xs opacity-70" style="margin-top:5px;">提示：运单号需唯一，图片可选。</div>
       <div class="mt-8 mb-8 flex items-center gap-2" style="margin-top:10px;">
         <button class="btn btn-primary" @click="submit" :disabled="submitting">提交</button>
         <button class="btn btn-ghost" @click="resetForm" :disabled="submitting">清空</button>
@@ -41,10 +62,9 @@
       </div>
     </section>
 
-    <!-- 预览（无边框，窄版居中） -->
     <section class="max-w-3xl mx-auto" style="margin-top:10px;">
       <h2 class="text-base mb-2">预览</h2>
-      <div class="overflow-x-auto">
+      <div class="overflow-x-auto preview-block">
         <table class="table table--compact table--zebra">
           <thead>
             <tr>
@@ -78,6 +98,7 @@ import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '../stores/auth'
 import api from '../api/client'
+import PageHeader from '../components/PageHeader.vue'
 
 const auth = useAuthStore()
 const { role, user } = storeToRefs(auth)
@@ -167,3 +188,40 @@ function resetForm() {
   msg.value = ''
 }
 </script>
+
+<style scoped>
+.upload-form {
+  display: grid;
+  gap: 12px;
+}
+
+.field-row {
+  display: grid;
+  gap: 6px;
+}
+
+.field-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.customer-pill {
+  padding-bottom: 4px;
+}
+
+.upload-meta {
+  margin-top: 18px;
+  margin-bottom: 8px;
+}
+
+.preview-block {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+}
+
+@media (max-width: 768px) {
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

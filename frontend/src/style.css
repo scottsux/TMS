@@ -6,12 +6,13 @@
 :root {
   --bg: #f5f7fb;
   --surface: #ffffff;
-  --surface-subtle: #f8fafc;
+  --surface-subtle: #fafcff;
   --surface-muted: #eef2f7;
   --text: #475569;
   --text-h: #0f172a;
   --text-muted: #64748b;
-  --border: #dbe2ea;
+  --border: #e6ebf2;
+  --border-soft: #edf2f7;
   --accent: #2563eb;
   --accent-strong: #1d4ed8;
   --accent-soft: #e8f0ff;
@@ -119,7 +120,7 @@ code {
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   box-shadow: none;
 }
@@ -182,11 +183,11 @@ code {
 .toolbar {
   display: grid;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 8px 0 14px;
   margin-bottom: 16px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .toolbar-grid {
@@ -210,7 +211,7 @@ code {
 /* Buttons */
 .btn {
   appearance: none;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   background: var(--surface);
   color: var(--text-h);
   padding: 9px 12px;
@@ -382,7 +383,7 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
-  background: var(--surface);
+  background: transparent;
 }
 
 .table th,
@@ -395,7 +396,7 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   color: var(--text-muted);
   font-weight: 600;
   border-bottom: 1px solid var(--border);
-  background: var(--surface-subtle);
+  background: transparent;
   white-space: nowrap;
 }
 
@@ -411,6 +412,13 @@ input[type="time"]::-webkit-calendar-picker-indicator {
 
 .table-wrap {
   overflow: auto;
+}
+
+.panel-soft {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 16px;
 }
 
 .num {
@@ -460,6 +468,9 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   padding: 32px 20px;
   text-align: center;
   color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
 }
 
 @media (max-width: 1024px) {

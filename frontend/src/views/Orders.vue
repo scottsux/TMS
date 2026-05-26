@@ -67,7 +67,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="order-table-shell">
       <div class="table-wrap">
         <table v-if="filteredSorted.length" class="table">
           <thead>
@@ -319,4 +319,5 @@ async function applyAdjust() {
 
 <style scoped>
 .row-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.order-table-shell { margin-top: 4px; }
 </style>
