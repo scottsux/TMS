@@ -2,28 +2,27 @@
 
 ## P0 - 先把项目地基补稳
 
-- [x] 修复中文乱码
-  - 已用 WSL/UTF-8 扫描源码，确认 `README.md`、`frontend/src/views/*`、`frontend/src/constants/enums.js`、`backend/main.py` 等文件内容正常。
-  - 已新增 `.editorconfig`，统一约束后续编辑使用 UTF-8。
-  - 注意：PowerShell 直接 `Get-Content` 可能因控制台输出编码显示乱码，文件本身并未损坏。
+- [x] 锁定当前真实业务状态流转
+  - 以当前代码和前端已跑通流程为准，不再沿用旧版状态机草案。
+  - 确认包裹实际流程：创建后默认 `IN_TRANSIT`，再进入 `ARRIVED`、`PACK_REQUESTED`、`PACKED`，保留 `SUBMITTED` 和 `REJECTED` 作为扩展状态。
+  - 确认订单实际流程：`DRAFT`、`READY_TO_PACK`、`PACKING`、`READY_TO_SHIP`、`COMPLETED`。
+  - 确认任务实际流程：`TODO`、`IN_PROGRESS`、`DONE`，其中“打包完成待发货”阶段任务仍保持 `IN_PROGRESS`。
+  - 联动检查 `backend/main.py`、`frontend/src/constants/enums.js`、相关页面按钮/筛选/展示，以及 `README.md`。
+  - 补充明确的状态转移约束，避免数据库接入后再返工。
 
-- [ ] 统一业务状态流转
-  - 确认包裹最终状态机：`SUBMITTED`、`IN_TRANSIT`、`ARRIVED`、`PACK_REQUESTED`、`PACKED`、`REJECTED`。
-  - 确认订单最终状态机：`DRAFT`、`READY_TO_PACK`、`PACKING`、`COMPLETED`。
-  - 确认任务最终状态机：`TODO`、`IN_PROGRESS`、`DONE`。
-  - 同步更新后端 enum、前端 enum、按钮逻辑、筛选逻辑和 README。
-
-- [ ] 接入真实数据库
+- [x] 接入真实数据库
   - 选择 SQLite 或 PostgreSQL 作为第一版持久化方案。
-  - 引入 SQLAlchemy 或项目选定 ORM。
-  - 建立 customers、parcels、orders、tasks、notifications 等表。
-  - 接入 Alembic migration。
-  - 替换 `backend/main.py` 中的内存字典存储。
+  - 第一版已落地 SQLite，继续保持 FastAPI 单文件结构，未额外引入 ORM。
+  - 建立 users、customers、parcels、orders、tasks、notifications 等表。
+  - 为 orders 持久化当前已在接口中使用的 forwarding/consignee 快照。
+  - 明确 parcel、order、task、notification 之间的关联关系和删除策略。
+  - 当前上传文件仍保留 `/tmp` 存储，元数据建模放到后续生产化阶段。
+  - 第一版先用代码内 schema bootstrap 替换内存字典，后续如需多环境迁移再补 Alembic。
 
-- [ ] 加真实认证和后端权限控制
+- [x] 加真实认证和后端权限控制
   - 建立用户模型和角色字段。
   - 实现密码校验和登录。
-  - 实现 JWT 签发与校验。
+  - 实现签名 token 的签发与校验。
   - 在后端接口中按 customer、staff、operator 做权限检查。
   - 保留前端权限控制作为 UI 辅助，但不把它当安全边界。
 
@@ -53,6 +52,12 @@
   - 支持打包图片或附件。
   - 考虑是否从“一订单一任务”扩展为多任务。
 
+- [x] 补最小后端测试闭环
+  - 先覆盖真实核心链路：提交打包申请、自动建单/复用订单、开始任务、完成打包、发货完成。
+  - 覆盖状态转移非法场景：重复开始任务、未开始直接完成、未到 `READY_TO_SHIP` 直接发货。
+  - 覆盖价格计算、人工改价、重量更新的基本行为。
+  - 这部分测试应在数据库和权限改造过程中持续可跑，不要等到最后。
+
 - [ ] 完善结算能力
   - 明确价格计算公式和币种。
   - 保存计价明细：实际重、体积重、单价、额外费用、覆盖价格原因。
@@ -69,7 +74,7 @@
   - 决定使用本地静态目录还是对象存储。
 
 - [ ] 增加测试覆盖
-  - 后端接口测试：包裹创建、状态流转、订单创建、任务完成、价格计算。
+  - 在最小后端测试闭环基础上继续补全更多接口和边界场景。
   - 权限测试：不同角色访问不同接口。
   - 文件上传测试：类型、大小、数量限制。
   - 前端关键流程验证：登录、提交包裹、申请打包、完成任务、结算。
@@ -92,9 +97,9 @@
 ## 建议推进顺序
 
 1. 修中文乱码。
-2. 统一状态流转和文档。
-3. 接入真实数据库。
-4. 实现后端认证和权限。
-5. 补核心业务功能。
-6. 加测试。
+2. 锁定真实状态流转和文档。
+3. 先补最小后端测试闭环。
+4. 接入真实数据库。
+5. 实现后端认证和权限。
+6. 补核心业务功能。
 7. 再做结构拆分和体验优化。

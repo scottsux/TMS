@@ -1,8 +1,19 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+const STORAGE_KEY = 'tms_auth'
+
+function getStoredToken() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw)?.token : null
+  } catch {
+    return null
+  }
+}
 
 async function request(path, { method = 'GET', body, token, headers: extraHeaders } = {}) {
   const headers = { 'Content-Type': 'application/json', ...(extraHeaders || {}) }
-  if (token) headers['Authorization'] = `Bearer ${token}`
+  const effectiveToken = token || getStoredToken()
+  if (effectiveToken) headers['Authorization'] = `Bearer ${effectiveToken}`
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
@@ -14,7 +25,8 @@ async function request(path, { method = 'GET', body, token, headers: extraHeader
 
 async function upload(path, formData, { token } = {}) {
   const headers = {}
-  if (token) headers['Authorization'] = `Bearer ${token}`
+  const effectiveToken = token || getStoredToken()
+  if (effectiveToken) headers['Authorization'] = `Bearer ${effectiveToken}`
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers, // do not set Content-Type; browser will set multipart boundary

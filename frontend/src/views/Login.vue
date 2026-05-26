@@ -3,20 +3,27 @@
     <section class="login-card">
       <div class="login-head">
         <h1 class="login-title">登录</h1>
-        <p class="login-subtitle">本页面为演示登录，仅设置本地角色与令牌。</p>
+        <p class="login-subtitle">使用后端真实账号登录，服务端会校验密码和角色权限。</p>
       </div>
 
       <div class="login-form">
         <div>
-          <label class="field-label">角色</label>
-          <select v-model="role" class="input">
-            <option disabled value="">选择角色</option>
-            <option value="customer">客户</option>
-            <option value="staff">员工</option>
-            <option value="operator">操作员</option>
-          </select>
+          <label class="field-label">邮箱</label>
+          <input v-model.trim="email" class="input" type="email" placeholder="例如 customer@example.com" />
         </div>
-        <button class="btn btn-primary login-submit" @click="doLogin" :disabled="!role">进入系统</button>
+        <div>
+          <label class="field-label">密码</label>
+          <input v-model="password" class="input" type="password" placeholder="输入密码" />
+        </div>
+        <div class="login-hint">
+          <div>客户：`customer@example.com` / `demo123`</div>
+          <div>员工：`staff@example.com` / `demo123`</div>
+          <div>操作员：`operator@example.com` / `demo123`</div>
+        </div>
+        <button class="btn btn-primary login-submit" @click="doLogin" :disabled="!email || !password || loading">
+          {{ loading ? '登录中...' : '进入系统' }}
+        </button>
+        <div v-if="msg" class="login-error">{{ msg }}</div>
       </div>
     </section>
   </div>
@@ -29,14 +36,25 @@ import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
 const auth = useAuthStore()
-const role = ref('')
+const email = ref('customer@example.com')
+const password = ref('demo123')
+const loading = ref(false)
+const msg = ref('')
 
-function doLogin() {
-  auth.login({ role: role.value })
+async function doLogin() {
+  msg.value = ''
   try {
-    sessionStorage.setItem('first_visit_done', '1')
-  } catch {}
-  router.replace('/')
+    loading.value = true
+    await auth.login({ email: email.value, password: password.value })
+    try {
+      sessionStorage.setItem('first_visit_done', '1')
+    } catch {}
+    router.replace('/')
+  } catch (error) {
+    msg.value = `登录失败：${error?.message || '未知错误'}`
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
@@ -77,6 +95,18 @@ function doLogin() {
 .login-form {
   display: grid;
   gap: 16px;
+}
+
+.login-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: grid;
+  gap: 4px;
+}
+
+.login-error {
+  font-size: 12px;
+  color: var(--danger);
 }
 
 .login-submit {

@@ -10,11 +10,11 @@
 
 - 后端为 FastAPI 单文件服务，入口是 `backend/main.py`
 - 前端为 Vue 3 + Vite + Pinia + Vue Router
-- 数据层目前使用内存字典，服务重启后数据会丢失
-- 登录是本地 mock，不是正式鉴权方案
+- 数据层已切换为 SQLite，数据库文件默认位于 `backend/tms.db`
+- 登录已接入后端真实密码校验和签名 token
 - 文件上传是 demo 实现，文件保存在 `/tmp/tms_uploads`
 
-这意味着它适合演示业务流程、验证页面和接口联动，但不应被当作生产系统设计完成版。
+这意味着它已经具备最小可用的持久化和服务端权限控制，但仍然是 demo 级单体实现，不应被当作生产系统设计完成版。
 
 ## 业务角色
 
@@ -89,7 +89,7 @@ TODO -> IN_PROGRESS -> DONE
 - 框架：FastAPI
 - 入口：`backend/main.py`
 - 依赖：`backend/requirements.txt`
-- 数据：内存字典
+- 数据：SQLite（`backend/tms.db`）
 - 上传目录：`/tmp/tms_uploads`
 
 ### 前端
@@ -160,8 +160,12 @@ TMS/
 ### Auth
 
 - `POST /auth/login`
-  - demo 登录
-  - 返回固定 token：`{"token": "jwt_token"}`
+  - 后端真实登录
+  - 校验邮箱和密码，返回签名 token、角色和用户信息
+  - 默认演示账号：
+    - `customer@example.com / demo123`
+    - `staff@example.com / demo123`
+    - `operator@example.com / demo123`
 
 ### Parcels
 
@@ -172,6 +176,7 @@ TMS/
 - `GET /parcels`
   - 查询包裹列表
   - 支持 `customer_id`、`status`、`page`、`page_size`
+  - customer 角色只能看到自己的包裹
 - `PATCH /parcels/{pid}/status`
   - 更新包裹状态
   - 按当前状态机校验合法流转
@@ -191,6 +196,7 @@ TMS/
 - `GET /orders`
   - 查询订单列表
   - 支持 `customer_id`、`status`、`page`、`page_size`
+  - customer 角色只能看到自己的订单
 - `GET /orders/{oid}`
   - 查询订单详情
 - `PATCH /orders/{oid}/price`
@@ -211,6 +217,7 @@ TMS/
 - `GET /tasks`
   - 查询任务列表
   - 支持 `order_id`
+  - 仅 staff / operator 可访问
 - `PATCH /tasks/{tid}/start`
   - 开始任务
   - 同步订单状态为 `PACKING`
@@ -252,6 +259,27 @@ TMS/
 - `GET /customers/{cid}/parcels`
   - 查询客户包裹
   - 支持 `status`
+
+## 服务端权限
+
+- `customer`
+  - 可登录、创建自己的包裹、查看自己的包裹和订单、提交打包申请
+- `staff`
+  - 可管理包裹状态、创建和调整订单、更新价格、发货、查看客户和通知
+- `operator`
+  - 可查看任务、开始任务、完成打包、查看通知
+
+前端仍保留角色驱动的 UI 控制，但真正的数据访问限制现在由后端执行。
+
+## 测试
+
+- 最小后端回归测试位于 `backend/tests/test_p0_flow.py`
+- 运行命令：
+
+```bash
+cd /home/scottsux/TMS
+/home/scottsux/miniconda3/envs/python312/bin/python -m unittest -v backend.tests.test_p0_flow
+```
 
 ## 价格规则
 

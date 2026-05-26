@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import api from '../api/client'
 
 const PERMISSIONS = {
   customer: new Set(['parcel:create', 'parcel:edit']),
@@ -24,12 +25,11 @@ export const useAuthStore = defineStore('auth', {
     isAuthed: (s) => !!s.token,
   },
   actions: {
-    login({ role }) {
-      this.role = role
-      this.token = 'mock-token'
-      // 简单占位用户：为 customer 赋一个示例 customer_id = 1
-      const id = role === 'customer' ? 1 : 0
-      this.user = { id, name: 'Demo User' }
+    async login({ email, password }) {
+      const res = await api.post('/auth/login', { email, password })
+      this.role = res.role
+      this.token = res.token
+      this.user = res.user
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ token: this.token, role: this.role, user: this.user })) } catch {}
     },
     logout() {
