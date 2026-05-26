@@ -199,6 +199,13 @@ function goLogin() {
   .content { padding: 16px; }
 }
 
+@media (max-width: 640px) {
+  .topbar { gap: 8px; padding: 10px 12px; flex-wrap: wrap; }
+  .brand { min-width: 0; flex: 1; }
+  .brand-subtitle { display: none; }
+  .user { margin-right: 0; margin-left: auto; }
+}
+
 /* Desktop: allow hiding sidebar via the top-left button */
 @media (min-width: 901px) {
   .layout.sidebar-hidden { grid-template-columns: 0 1fr; }

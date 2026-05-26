@@ -508,6 +508,14 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   .metric-grid {
     grid-template-columns: 1fr;
   }
+
+  .page-actions {
+    width: 100%;
+  }
+
+  .btn {
+    white-space: nowrap;
+  }
 }
 
 /* Table variants */
