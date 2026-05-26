@@ -2,6 +2,7 @@
   <div :class="['shell', { dark: isDark }]">
     <header class="topbar">
       <button
+        v-if="showSidebarShell"
         class="icon-btn"
         aria-label="Toggle Sidebar"
         @click.stop="toggleSidebar"
@@ -18,12 +19,12 @@
         </div>
       </div>
       <div class="spacer" />
-      <div class="user">
-        <button class="user-btn" @click="menuOpen = !menuOpen">
+      <div v-if="showSidebarShell" class="user">
+        <button ref="menuButtonRef" class="user-btn" @click="menuOpen = !menuOpen">
           <span class="role">{{ roleLabel }}</span>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
-        <div v-if="menuOpen" class="menu" @click.outside>
+        <div v-if="menuOpen" ref="menuRef" class="menu">
           <div class="menu-item" @click="goLogin">切换角色</div>
           <div class="menu-item" @click="logout">退出</div>
         </div>
@@ -44,11 +45,11 @@
       </button>
     </header>
 
-    <div :class="['layout', { 'sidebar-hidden': !sidebarOpen }]">
-      <aside :class="['sidebar', { open: sidebarOpen }]" @click.outside>
+    <div :class="['layout', { 'sidebar-hidden': showSidebarShell && !sidebarOpen, 'layout-no-sidebar': !showSidebarShell }]">
+      <aside v-if="showSidebarShell" :class="['sidebar', { open: sidebarOpen }]">
         <Navbar />
       </aside>
-      <div v-if="sidebarOpen && isMobileView" class="sidebar-mask" @click="sidebarOpen = false" />
+      <div v-if="showSidebarShell && sidebarOpen && isMobileView" class="sidebar-mask" @click="sidebarOpen = false" />
       <main class="content" @click="maybeCloseSidebar">
         <router-view />
       </main>
@@ -59,7 +60,7 @@
 
 <script setup>
 import { onMounted, onUnmounted, ref, watch, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import Navbar from './components/Navbar.vue'
 import { useAppStore } from './stores/app'
 import { useAuthStore } from './stores/auth'
@@ -69,9 +70,13 @@ const app = useAppStore()
 const isDark = computed(() => app.dark)
 const auth = useAuthStore()
 const router = useRouter()
+const route = useRoute()
 const menuOpen = ref(false)
 const isMobileView = ref(false)
+const menuRef = ref(null)
+const menuButtonRef = ref(null)
 const roleLabel = computed(() => ({ customer:'客户', staff:'员工', operator:'操作员' }[auth.role] || '未登录'))
+const showSidebarShell = computed(() => auth.isAuthed && !route.meta?.public)
 
 function applyTheme(dark) {
   const root = document.documentElement
@@ -84,6 +89,7 @@ function isMobile() {
   return window.matchMedia('(max-width: 900px)').matches
 }
 function toggleSidebar() {
+  if (!showSidebarShell.value) return
   sidebarOpen.value = !sidebarOpen.value
 }
 function maybeCloseSidebar() {
@@ -96,6 +102,14 @@ function maybeCloseSidebar() {
 // Optional: close with ESC
 function onKeydown(ev) {
   if (ev.key === 'Escape' && sidebarOpen.value && isMobile()) sidebarOpen.value = false
+  if (ev.key === 'Escape' && menuOpen.value) menuOpen.value = false
+}
+
+function onDocumentClick(ev) {
+  const target = ev.target
+  if (!menuOpen.value) return
+  if (menuRef.value?.contains(target) || menuButtonRef.value?.contains(target)) return
+  menuOpen.value = false
 }
 
 function onResize() {
@@ -107,11 +121,13 @@ onMounted(() => {
   onResize()
   window.addEventListener('keydown', onKeydown)
   window.addEventListener('resize', onResize)
+  document.addEventListener('click', onDocumentClick)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('resize', onResize)
+  document.removeEventListener('click', onDocumentClick)
 })
 
 onMounted(() => {
@@ -126,6 +142,20 @@ onMounted(() => {
 watch(isDark, (v) => {
   applyTheme(v)
   localStorage.setItem('theme', v ? 'dark' : 'light')
+}, { immediate: true })
+
+watch(() => route.fullPath, () => {
+  menuOpen.value = false
+  if (!showSidebarShell.value) sidebarOpen.value = false
+})
+
+watch(showSidebarShell, (value) => {
+  if (!value) {
+    sidebarOpen.value = false
+    menuOpen.value = false
+    return
+  }
+  if (!isMobileView.value) sidebarOpen.value = true
 }, { immediate: true })
 
 function logout() {
@@ -157,6 +187,7 @@ function goLogin() {
 .menu-item:hover { background: color-mix(in oklab, var(--bg) 92%, transparent); }
 
 .layout { display: grid; grid-template-columns: 248px 1fr; min-height: calc(100svh - 58px); position: relative; }
+.layout-no-sidebar { grid-template-columns: 1fr; }
 .sidebar { border-right: 1px solid var(--border); padding: 16px 12px; background: var(--surface-subtle); position: relative; z-index: 25; }
 .content { padding: 24px; }
 .sidebar-mask { position: fixed; inset: 58px 0 0 0; background: rgb(15 23 42 / 0.36); z-index: 24; }
