@@ -32,9 +32,11 @@
 4. 客户选择已到仓包裹并提交打包申请
 5. 系统自动生成或复用订单，并同步创建/使用打包任务
 6. 操作员开始打包
-7. 操作员填写实际重量并完成任务
-8. 系统同步订单、任务和包裹状态
-9. 员工进行计价或人工覆盖最终价格
+7. 操作员填写实际重量并完成打包
+8. 订单进入待发货，任务仍保持进行中
+9. 员工完成发货并通知客户
+10. 系统再同步订单、任务和包裹状态
+11. 员工进行计价或人工覆盖最终价格
 
 ## 状态模型
 
@@ -60,14 +62,15 @@ PACKED -> terminal
 ### Order
 
 ```text
-DRAFT -> READY_TO_PACK -> PACKING -> COMPLETED
+DRAFT -> READY_TO_PACK -> PACKING -> READY_TO_SHIP -> COMPLETED
 ```
 
 说明：
 
 - 客户提交打包申请后，系统会自动创建或复用订单
 - 任务开始时，订单会同步为 `PACKING`
-- 任务完成时，订单会同步为 `COMPLETED`
+- 打包完成时，订单会同步为 `READY_TO_SHIP`
+- 发货完成后，订单才会同步为 `COMPLETED`
 
 ### Task
 
@@ -212,10 +215,15 @@ TMS/
   - 开始任务
   - 同步订单状态为 `PACKING`
 - `PATCH /tasks/{tid}/complete`
-  - 完成任务
+  - 完成打包
   - 可携带 `actual_weight`
-  - 同步订单状态为 `COMPLETED`
+  - 同步订单状态为 `READY_TO_SHIP`
+  - 任务保持 `IN_PROGRESS`
   - 同步订单关联包裹状态为 `PACKED`
+- `PATCH /orders/{oid}/ship`
+  - 完成发货
+  - 同步订单状态为 `COMPLETED`
+  - 同步关联任务状态为 `DONE`
 
 ### Notifications
 
@@ -225,6 +233,8 @@ TMS/
   - 会写入转运信息和收件信息快照
 - `POST /notify/ready_to_ship`
   - 打包完成待发货通知
+- `POST /notify/shipped`
+  - 发货完成通知客户
 - `GET /notifications`
   - 查询通知
   - 支持 `type`、`customer_id`

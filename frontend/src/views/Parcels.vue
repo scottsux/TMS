@@ -98,7 +98,7 @@
               <td v-if="role !== 'customer'">{{ p.customer }}</td>
               <td><StatusBadge type="parcel" :status="p.status" :label="p.statusZh" /></td>
               <td>{{ p.note || '-' }}</td>
-              <td v-if="role === 'customer'">{{ p.packed_at ? `已打包 ${dateTimeShort(p.packed_at)}` : '-' }}</td>
+              <td v-if="role === 'customer'">{{ parcelPrompt(p) }}</td>
               <td v-else class="num">
                 <button v-if="p.status === 'IN_TRANSIT'" class="btn" :disabled="busy" @click="setStatus(p, 'ARRIVED')">标记到仓</button>
                 <span v-else class="section-note">-</span>
@@ -265,6 +265,7 @@ async function refresh() {
       statusZh: zh.parcel[p.status] || p.status,
       note: p.note || '',
       packed_at: p.packed_at || '',
+      shipped_at: p.shipped_at || '',
     }))
     if (role.value === 'staff') {
       try {
@@ -276,6 +277,12 @@ async function refresh() {
   } catch {
     rows.value = []
   }
+}
+
+function parcelPrompt(parcel) {
+  if (parcel.shipped_at) return `已发货 ${dateTimeShort(parcel.shipped_at)}`
+  if (parcel.packed_at) return `已打包 ${dateTimeShort(parcel.packed_at)}`
+  return '-'
 }
 
 async function setStatus(row, next) {

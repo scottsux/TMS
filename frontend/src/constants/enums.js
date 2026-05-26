@@ -11,6 +11,7 @@ export const OrderStatus = {
   DRAFT: 'DRAFT',
   READY_TO_PACK: 'READY_TO_PACK',
   PACKING: 'PACKING',
+  READY_TO_SHIP: 'READY_TO_SHIP',
   COMPLETED: 'COMPLETED',
 }
 
@@ -25,7 +26,7 @@ export const zh = {
     SUBMITTED: '提交', IN_TRANSIT: '在途', ARRIVED: '已到仓', PACK_REQUESTED: '申请打包', PACKED: '已打包', REJECTED: '已拒绝'
   },
   order: {
-    DRAFT: '草稿', READY_TO_PACK: '待打包', PACKING: '打包中', COMPLETED: '已完成'
+    DRAFT: '草稿', READY_TO_PACK: '待打包', PACKING: '打包中', READY_TO_SHIP: '待发货', COMPLETED: '已完成'
   },
   task: { TODO: '待办', IN_PROGRESS: '进行中', DONE: '已完成' }
 }

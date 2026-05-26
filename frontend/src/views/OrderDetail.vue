@@ -1,6 +1,6 @@
 <template>
   <div class="container" style="container-type:inline-size;">
-    <PageHeader :title="`订单详情 #${id}`" subtitle="详情页作为流程中枢，集中处理重量、包裹和完成打包。">
+    <PageHeader :title="`订单详情 #${id}`" subtitle="详情页作为流程中枢，集中处理重量、打包完成和发货动作。">
       <template #actions>
         <router-link class="btn" to="/orders">返回订单列表</router-link>
       </template>
@@ -132,8 +132,11 @@
             {{ msg }}
           </div>
           <div class="side-actions">
-            <button v-if="can('task:complete')" class="btn btn-primary" :disabled="sending" @click="completeAndNotify">
-              打包完毕并通知客户
+            <button v-if="can('task:complete') && order.status === 'PACKING'" class="btn btn-primary" :disabled="sending" @click="completePacking">
+              打包完毕，转为待发货
+            </button>
+            <button v-if="can('task:complete') && order.status === 'READY_TO_SHIP'" class="btn btn-primary" :disabled="sending" @click="shipAndNotify">
+              发货完成并通知客户
             </button>
           </div>
         </article>
@@ -190,16 +193,32 @@ function serviceZh(value) {
   return value === 'express' ? '特快' : value === 'economy' ? '普快' : value
 }
 
-async function completeAndNotify() {
+async function completePacking() {
   if (!taskId.value) return
   try {
     sending.value = true
-    if (!window.confirm('确认将该订单标记为打包完毕并通知客户？')) return
+    if (!window.confirm('确认将该订单标记为打包完毕，并转为待发货？')) return
     await api.patch(`/tasks/${taskId.value}/complete`, { actual_weight: order.value?.actual_weight || 0 })
-    const raw = await api.get(`/orders/${id.value}`)
-    await api.post('/notify/ready_to_ship', { customer_id: raw.customer_id || 0, message: 'packed' })
     await refreshOrder()
-    msg.value = '已标记打包完毕并通知客户'
+    msg.value = '已标记打包完毕，订单进入待发货'
+    msgType.value = 'ok'
+  } catch (error) {
+    msg.value = `操作失败：${error?.message || '未知错误'}`
+    msgType.value = 'err'
+  } finally {
+    sending.value = false
+  }
+}
+
+async function shipAndNotify() {
+  try {
+    sending.value = true
+    if (!window.confirm('确认发货完成并通知客户？')) return
+    const raw = await api.get(`/orders/${id.value}`)
+    await api.patch(`/orders/${id.value}/ship`, {})
+    await api.post('/notify/shipped', { customer_id: raw.customer_id || 0, message: 'shipped' })
+    await refreshOrder()
+    msg.value = '已发货并通知客户'
     msgType.value = 'ok'
     router.push('/orders')
   } catch (error) {
@@ -215,6 +234,7 @@ async function refreshOrder() {
     const o = await api.get(`/orders/${id.value}`)
     order.value = {
       status: o.status,
+      customer_id: o.customer_id,
       customer: o.customer_name || o.customer_id,
       statusZh: zh.order[o.status] || o.status,
       actual_weight: o.actual_weight || 0,

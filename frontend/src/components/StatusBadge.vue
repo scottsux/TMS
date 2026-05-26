@@ -25,11 +25,13 @@ const toneClass = computed(() => {
       DRAFT: 'badge-muted',
       READY_TO_PACK: 'badge-info',
       PACKING: 'badge-warn',
+      READY_TO_SHIP: 'badge-info',
       COMPLETED: 'badge-ok',
     },
     task: {
       TODO: 'badge-muted',
       IN_PROGRESS: 'badge-warn',
+      READY_TO_SHIP: 'badge-info',
       DONE: 'badge-ok',
     },
   }

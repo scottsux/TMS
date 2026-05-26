@@ -31,6 +31,7 @@ class OrderStatus(str, Enum):
     DRAFT = "DRAFT"
     READY_TO_PACK = "READY_TO_PACK"
     PACKING = "PACKING"
+    READY_TO_SHIP = "READY_TO_SHIP"
     COMPLETED = "COMPLETED"
 
 
@@ -89,6 +90,7 @@ class Parcel(BaseModel):
     arrived_at: Optional[str] = None
     pack_requested_at: Optional[str] = None
     packed_at: Optional[str] = None
+    shipped_at: Optional[str] = None
 
 
 class ParcelStatusPatch(BaseModel):
@@ -185,6 +187,7 @@ def create_parcel(body: ParcelCreate):
         "arrived_at": None,
         "pack_requested_at": None,
         "packed_at": None,
+        "shipped_at": None,
     }
     return Parcel(**db["parcels"][pid])
 
@@ -418,20 +421,39 @@ def complete_task(tid: int, body: TaskComplete):
     t = db["tasks"].get(tid)
     if not t:
         raise HTTPException(status_code=404, detail="task not found")
-    t["status"] = TaskStatus.DONE
     if body.actual_weight is not None:
         t["actual_weight"] = float(body.actual_weight)
-        o = db["orders"].get(t["order_id"])
-        if o:
+    o = db["orders"].get(t["order_id"])
+    if o:
+        if t.get("actual_weight") is not None:
             o["actual_weight"] = t["actual_weight"]
-            # order status follows
-            o["status"] = OrderStatus.COMPLETED
-            # 同步该订单的所有包裹为 PACKED
-            now = datetime.now(timezone.utc).isoformat()
-            for pid in o.get("parcel_ids", []):
-                if pid in db["parcels"]:
-                    db["parcels"][pid]["status"] = ParcelStatus.PACKED
-                    db["parcels"][pid]["packed_at"] = now
+        # 打包完成后仍保持任务在进行中，订单转为待发货
+        t["status"] = TaskStatus.IN_PROGRESS
+        o["status"] = OrderStatus.READY_TO_SHIP
+        now = datetime.now(timezone.utc).isoformat()
+        for pid in o.get("parcel_ids", []):
+            if pid in db["parcels"]:
+                db["parcels"][pid]["status"] = ParcelStatus.PACKED
+                db["parcels"][pid]["packed_at"] = now
+    return {"ok": True}
+
+
+@app.patch("/orders/{oid}/ship")
+def ship_order(oid: int):
+    o = db["orders"].get(oid)
+    if not o:
+        raise HTTPException(status_code=404, detail="order not found")
+    if o["status"] != OrderStatus.READY_TO_SHIP:
+        raise HTTPException(status_code=400, detail="order is not ready to ship")
+    o["status"] = OrderStatus.COMPLETED
+    now = datetime.now(timezone.utc).isoformat()
+    for pid in o.get("parcel_ids", []):
+        if pid in db["parcels"]:
+            db["parcels"][pid]["shipped_at"] = now
+    for t in db["tasks"].values():
+        if t.get("order_id") == oid:
+            t["status"] = TaskStatus.DONE
+            break
     return {"ok": True}
 
 
@@ -475,6 +497,14 @@ def notify_ready(body: ReadyNotify):
     now = datetime.now(timezone.utc)
     item = {"customer_id": body.customer_id, "message": body.message or "ready", "ts": now.isoformat()}
     arr.append(item)
+    return {"ok": True}
+
+
+@app.post("/notify/shipped")
+def notify_shipped(body: ReadyNotify):
+    arr = db["notifications"].setdefault("shipped", [])
+    now = datetime.now(timezone.utc).isoformat()
+    arr.append({"customer_id": body.customer_id, "message": body.message or "shipped", "ts": now})
     return {"ok": True}
 
 

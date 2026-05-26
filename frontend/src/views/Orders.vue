@@ -1,6 +1,6 @@
 <template>
   <div class="container" style="container-type:inline-size;">
-    <PageHeader title="订单" subtitle="集中查看待打包、打包中和已完成订单，主操作收敛到详情页。">
+    <PageHeader title="订单" subtitle="集中查看待打包、打包中、待发货和已完成订单，主操作收敛到详情页。">
       <template #actions>
         <button class="btn" :disabled="busy" @click="refresh">刷新</button>
       </template>
@@ -16,8 +16,8 @@
         <div class="metric-value">{{ countByStatus('READY_TO_PACK') }}</div>
       </article>
       <article class="metric-card">
-        <div class="metric-label">打包中</div>
-        <div class="metric-value">{{ countByStatus('PACKING') }}</div>
+        <div class="metric-label">待发货</div>
+        <div class="metric-value">{{ countByStatus('READY_TO_SHIP') }}</div>
       </article>
       <article class="metric-card">
         <div class="metric-label">已完成金额</div>
@@ -41,6 +41,7 @@
           <option value="DRAFT">草稿</option>
           <option value="READY_TO_PACK">待打包</option>
           <option value="PACKING">打包中</option>
+          <option value="READY_TO_SHIP">待发货</option>
           <option value="COMPLETED">已完成</option>
         </select>
       </div>
@@ -99,6 +100,7 @@
                 <div class="row-actions">
                   <router-link class="btn" :to="`/orders/${o.id}`">查看</router-link>
                   <button v-if="role !== 'customer' && o.status === 'READY_TO_PACK'" class="btn" :disabled="busy" @click="start(o)">开始打包</button>
+                  <button v-if="role !== 'customer' && o.status === 'READY_TO_SHIP'" class="btn btn-primary" :disabled="busy" @click="ship(o)">发货完成</button>
                   <button v-if="can('order:create')" class="btn btn-primary" :disabled="busy" @click="openAdjust(o)">调整包裹</button>
                 </div>
               </td>
@@ -207,7 +209,7 @@ function countByStatus(target) {
 }
 
 function mapStatus(value) {
-  return ({ DRAFT: '草稿', READY_TO_PACK: '待打包', PACKING: '打包中', COMPLETED: '已完成' }[value] || value)
+  return ({ DRAFT: '草稿', READY_TO_PACK: '待打包', PACKING: '打包中', READY_TO_SHIP: '待发货', COMPLETED: '已完成' }[value] || value)
 }
 
 function dateTimeShort(ts) {
@@ -275,6 +277,18 @@ async function start(order) {
     const tid = await findTaskId(order.id)
     if (!tid) return
     await api.patch(`/tasks/${tid}/start`, {})
+    await refresh()
+  } finally {
+    busy.value = false
+  }
+}
+
+async function ship(order) {
+  try {
+    busy.value = true
+    if (!window.confirm(`确认将订单 ${order.order_no || `ORD-${String(order.id).padStart(4, '0')}`} 标记为发货完成并通知客户？`)) return
+    await api.patch(`/orders/${order.id}/ship`, {})
+    await api.post('/notify/shipped', { customer_id: order.customer, message: 'shipped' })
     await refresh()
   } finally {
     busy.value = false

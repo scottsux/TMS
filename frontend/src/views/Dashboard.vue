@@ -219,6 +219,7 @@ const dashboard = computed(() => {
         { value: 'DRAFT', label: '草稿' },
         { value: 'READY_TO_PACK', label: '待打包' },
         { value: 'PACKING', label: '打包中' },
+        { value: 'READY_TO_SHIP', label: '待发货' },
         { value: 'COMPLETED', label: '已完成' },
       ],
       columns: ['下单时间', '订单号', '客户', '包裹数', '状态', '实重(kg)', '体积重(kg)', '最终价格'],
@@ -232,7 +233,7 @@ const dashboard = computed(() => {
       subtitle: '集中查看待办、进行中和已完成任务，主操作收敛到订单详情页。',
       metrics: [
         { label: '待办任务', value: tasks.value.filter((t) => t.status === 'TODO').length },
-        { label: '进行中', value: tasks.value.filter((t) => t.status === 'IN_PROGRESS').length },
+        { label: '进行中 / 待发货', value: tasks.value.filter((t) => t.status === 'IN_PROGRESS').length },
         { label: '已完成', value: tasks.value.filter((t) => t.status === 'DONE').length },
         { label: '打包申请通知', value: notifications.value.length },
       ],
@@ -256,7 +257,7 @@ const dashboard = computed(() => {
     metrics: [
       { label: '订单总数', value: orders.value.length },
       { label: '待打包', value: orders.value.filter((o) => o.status === 'READY_TO_PACK').length },
-      { label: '打包中', value: orders.value.filter((o) => o.status === 'PACKING').length },
+      { label: '待发货', value: orders.value.filter((o) => o.status === 'READY_TO_SHIP').length },
       { label: '已完成金额', value: `$${orders.value.filter((o) => o.status === 'COMPLETED').reduce((sum, item) => sum + Number(item.final_price || 0), 0).toFixed(2)}` },
     ],
     filterLabels: ['订单号', '客户', '订单状态'],
@@ -267,6 +268,7 @@ const dashboard = computed(() => {
       { value: 'DRAFT', label: '草稿' },
       { value: 'READY_TO_PACK', label: '待打包' },
       { value: 'PACKING', label: '打包中' },
+      { value: 'READY_TO_SHIP', label: '待发货' },
       { value: 'COMPLETED', label: '已完成' },
     ],
     columns: ['下单时间', '订单号', '客户', '包裹数', '状态', '实重(kg)', '体积重(kg)', '最终价格'],
