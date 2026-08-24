@@ -31,7 +31,7 @@
 
 后端：
 
-- FastAPI 单文件服务，入口是 `backend/main.py`。
+- FastAPI 模块化单体服务，兼容入口是 `backend/main.py`；应用模块位于 `backend/app/`。
 - 依赖在 `backend/requirements.txt`。
 - 当前使用 SQLite 作为 MVP 数据库；迁移、生产数据库和完整审计仍属于后续工作。
 - 文件上传 demo 存储目录是 `/tmp/tms_uploads`。
@@ -67,14 +67,14 @@
 
 修改状态相关逻辑时，需要同步检查：
 
-- 后端 `backend/main.py` 中的枚举和状态流转。
+- 后端 `backend/app/models/enums.py`、`backend/app/services/` 和路由中的状态流转。
 - 前端 `frontend/src/constants/enums.js`。
 - 相关页面中的按钮、筛选、状态展示和权限判断。
 - `README.md` 中的业务说明。
 
 ## 通用开发约定
 
-- 保持 MVP 简洁，优先延续现有 FastAPI 单文件和 Vue 页面结构，除非改动已经明显需要拆分。
+- 保持 MVP 简洁，延续现有 FastAPI 模块化单体和 Vue 页面结构，避免无职责边界的碎片文件。
 - 不要把 SQLite MVP 持久化误认为生产级数据库；当前仍缺少迁移、备份和生产配置。
 - 当前登录已包含后端密码校验和签名 Token，但仍是演示级认证，不是生产身份系统。
 - 修改业务流程时，同时检查前后端状态枚举、路由页面、权限判断和 README。

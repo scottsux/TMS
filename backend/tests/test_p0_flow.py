@@ -28,7 +28,7 @@ def fetch_user(email: str) -> sqlite3.Row:
 class P0FlowTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
-        main.DB_PATH = Path(self.tempdir.name) / "test.db"
+        main.configure_paths(db_path=Path(self.tempdir.name) / "test.db")
         main.init_db()
         main.seed()
         self.customer_user = fetch_user("customer@example.com")
@@ -124,7 +124,7 @@ class P0FlowTests(unittest.TestCase):
 class PermissionApiTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
-        main.DB_PATH = Path(self.tempdir.name) / "test.db"
+        main.configure_paths(db_path=Path(self.tempdir.name) / "test.db")
         main.init_db()
         main.seed()
         self.client = TestClient(main.app)
@@ -165,9 +165,11 @@ class PermissionApiTests(unittest.TestCase):
 class BusinessRuleApiTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
-        self.original_upload_dir = main.UPLOAD_DIR
-        main.DB_PATH = Path(self.tempdir.name) / "test.db"
-        main.UPLOAD_DIR = Path(self.tempdir.name) / "uploads"
+        self.original_upload_dir = main.config.UPLOAD_DIR
+        main.configure_paths(
+            db_path=Path(self.tempdir.name) / "test.db",
+            upload_dir=Path(self.tempdir.name) / "uploads",
+        )
         main.init_db()
         main.seed()
         self.client = TestClient(main.app)
@@ -177,7 +179,7 @@ class BusinessRuleApiTests(unittest.TestCase):
 
     def tearDown(self):
         self.client.close()
-        main.UPLOAD_DIR = self.original_upload_dir
+        main.configure_paths(upload_dir=self.original_upload_dir)
         self.tempdir.cleanup()
 
     @staticmethod
@@ -320,7 +322,7 @@ class BusinessRuleApiTests(unittest.TestCase):
 
         self.assertEqual(valid.status_code, 200)
         self.assertEqual(valid.json()["saved"], [{"filename": "package.png", "size": 10}])
-        self.assertTrue((main.UPLOAD_DIR / "1" / "package.png").is_file())
+        self.assertTrue((main.config.UPLOAD_DIR / "1" / "package.png").is_file())
         self.assertEqual(too_many.status_code, 400)
         self.assertEqual(unsupported_type.status_code, 400)
         self.assertEqual(too_large.status_code, 400)

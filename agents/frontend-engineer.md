@@ -11,7 +11,7 @@
 - API 访问统一走 `frontend/src/api/client.js`。
 - 权限展示逻辑主要参考 `frontend/src/stores/auth.js`。
 - 开始实施前必须阅读仓库根目录的 `IMPLEMENTATION_PLAN.md`，一次只执行一个里程碑。
-- 后端权限是最终安全边界；前端 permission map 和按钮显示必须与 `backend/main.py` 保持一致。
+- 后端权限是最终安全边界；前端 permission map 和按钮显示必须与 `backend/app/core/permissions.py` 保持一致。
 - 必须遵守仓库根目录的 `.editorconfig`、`.gitattributes`、`.prettierrc.json`。
 
 ## 代码风格要求

@@ -43,12 +43,11 @@
   - 已保存自动计价、人工改价、实际重/体积重更新和异常处理的操作人、时间、前值、后值与原因/说明。
   - 已将改价历史从前端 `localStorage` 改为服务端审计读取；币种、付款状态、发票和审批仍属于后续范围。
 
-- [ ] Milestone 4.5：模块化单体重构
-  - 在不改变 API、数据库表结构、状态规则和前端调用方式的前提下拆分 `backend/main.py`。
-  - 先抽取配置、数据库连接/schema、枚举/schema、认证/RBAC，再抽取 repositories、services 和 API routes。
-  - 保留 `backend.main` 测试导入兼容性，或同步迁移测试并保持相同覆盖。
-  - 本里程碑不引入 PostgreSQL、ORM、Alembic、消息队列、运输模型或 AI。
-  - 完成后运行现有流程、异常、审计、权限测试和前端构建，并停下等待确认。
+- [x] Milestone 4.5：模块化单体重构
+  - 已将 `backend/main.py` 收敛为兼容入口，保持既有 FastAPI app 与测试直接调用对象可导入。
+  - 已抽取配置、SQLite 连接、枚举、Pydantic schema、Token/当前用户/RBAC，以及订单计价、重量、异常和审计规则。
+  - API 路径、SQLite 表结构、状态规则和前端调用方式均未改动；未引入 PostgreSQL、ORM、Alembic、消息队列、运输模型或 AI。
+  - 已运行现有流程、异常、审计、权限测试和前端构建；后续仅在新业务变更时继续按领域拆分 repository 与 route handler。
 
 ### P2 - 运营功能和生产化
 

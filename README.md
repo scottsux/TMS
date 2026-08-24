@@ -57,7 +57,7 @@ Vue 3 + Vite + Pinia + Vue Router
               |
        fetch + Bearer token
               |
-FastAPI monolith (REST APIs, RBAC, state transitions)
+FastAPI modular monolith (REST APIs, RBAC, state transitions)
               |
       Python sqlite3 / SQLite
               |
@@ -95,7 +95,15 @@ OPEN -> RESOLVED
 
 ```text
 backend/
-  main.py                 # FastAPI app, schema bootstrap, business logic, APIs
+  main.py                 # Compatibility entry point and legacy test exports
+  app/
+    config.py             # SQLite, upload, and token configuration
+    api/routes.py         # Existing FastAPI paths and response contracts
+    core/                 # Token, current-user, and RBAC helpers
+    db/connection.py      # SQLite connection factory
+    models/enums.py       # Workflow, role, and exception enums
+    schemas/              # Pydantic request/response schemas
+    services/order_rules.py # Pricing, weight, exception, and audit rules
   requirements.txt
   tests/test_p0_flow.py   # Core workflow test cases
 frontend/
@@ -176,20 +184,19 @@ These limitations are intentional to keep the project honest as an MVP:
 - File uploads are demo files stored under `/tmp/tms_uploads`; there is no object storage, metadata table, preview URL, deletion flow, or cleanup policy.
 - SQLite schema is initialized in application code; there are no migrations, ORM, connection pool, or production database configuration.
 - `order_parcels` is the canonical order-to-parcel relation. The legacy `orders.parcel_ids` JSON column remains synchronized temporarily for API compatibility; it is not the source of truth.
-- The service is a single FastAPI module without Docker, CI/CD, observability, rate limiting, or production secret management.
-- The current frontend permission map and several visible actions need further alignment with the backend permission map before production use.
+- The service is a modular FastAPI monolith without Docker, CI/CD, observability, rate limiting, or production secret management.
+- The frontend permission map is UI-only; backend RBAC remains the final authorization boundary.
 - Billing is a completed-order settlement view only; currencies, payment state, invoices, refund processing, and approval workflows are still out of scope.
 
 ## Planned next steps
 
 The most valuable next improvements are:
 
-1. Align frontend actions with backend permissions and establish a repeatable local validation environment.
-2. Add dedicated tests for permissions, price calculation, manual overrides, and weight updates.
-3. Normalize the order-to-parcel relationship and introduce database migrations.
-4. Add shipment metadata, carrier events, exceptions, cancellation, and audit records.
-5. Add task assignment, warehouse exception handling, and production file storage.
-6. Only after a reliable logistics event model exists, add a measurable AI feature such as exception classification or an operations-assistant workflow.
+1. Establish a repeatable local validation environment.
+2. Add shipment metadata, carrier events, cancellation, and delivery confirmation.
+3. Add database migrations when SQLite schema changes require controlled rollout.
+4. Add task assignment, warehouse exception handling, and production file storage.
+5. Only after a reliable logistics event model exists, add a measurable AI feature such as exception classification or an operations-assistant workflow.
 
 ## Portfolio framing
 

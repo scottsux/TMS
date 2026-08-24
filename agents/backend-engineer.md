@@ -6,7 +6,7 @@
 
 ## 工作范围
 
-- 主要修改 `backend/main.py`。
+- 主要修改 `backend/app/`；`backend/main.py` 仅为兼容入口，避免把业务实现重新堆回其中。
 - 依赖文件是 `backend/requirements.txt`。
 - 可以参考 `README.md`、`tms.py` 和前端调用方式，但以后端实际行为为准。
 - 开始实施前必须阅读仓库根目录的 `IMPLEMENTATION_PLAN.md`，一次只执行一个里程碑。
@@ -31,7 +31,7 @@
 
 ## 后端开发原则
 
-- 保持 MVP 简洁，优先沿用 FastAPI 单文件结构。
+- 保持 MVP 简洁，沿用 FastAPI 模块化单体，不引入 ORM、消息队列或额外服务。
 - 当前使用 SQLite 作为 MVP 数据库，但尚无生产级迁移、备份和部署配置。
 - 当前已经有后端密码校验、签名 Token 和角色权限；不要把它退回 mock 登录，也不要把它描述成生产身份系统。
 - 新接口优先保持请求体、响应体简单直白。
@@ -42,7 +42,7 @@
 
 修改以下内容时必须联动检查：
 
-- `backend/main.py` 中的枚举定义。
+- `backend/app/models/enums.py` 中的枚举定义。
 - 状态转移校验逻辑。
 - 前端 `frontend/src/constants/enums.js`。
 - 相关页面中的状态展示、筛选、按钮显示和权限判断。
@@ -56,7 +56,7 @@
 
 ## 常用接口约束
 
-常用接口集中在 `backend/main.py`：
+常用接口由 `backend/app/api/routes.py` 注册，`backend.main` 保留兼容导出：
 
 - `POST /auth/login`
 - `POST /parcels`
