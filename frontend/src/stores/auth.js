@@ -2,12 +2,16 @@ import { defineStore } from 'pinia'
 import api from '../api/client'
 
 const PERMISSIONS = {
-  customer: new Set(['parcel:create', 'parcel:edit']),
+  customer: new Set(['parcel:create', 'parcel:view', 'order:view', 'notification:create']),
   staff: new Set([
-    'parcel:create', 'parcel:edit', 'parcel:approve', 'parcel:arrived',
-    'order:create', 'task:assign', 'price:update'
+    'parcel:create', 'parcel:view', 'parcel:arrived',
+    'order:create', 'order:view', 'order:update', 'order:ship',
+    'task:view', 'customer:view', 'price:update',
+    'notification:view', 'notification:clear'
   ]),
-  operator: new Set(['task:start', 'task:complete'])
+  operator: new Set([
+    'parcel:view', 'order:view', 'task:view', 'task:start', 'task:complete', 'notification:view'
+  ])
 }
 
 const STORAGE_KEY = 'tms_auth'

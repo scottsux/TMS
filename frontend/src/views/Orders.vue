@@ -99,9 +99,9 @@
               <td class="num">
                 <div class="row-actions">
                   <router-link class="btn" :to="`/orders/${o.id}`">查看</router-link>
-                  <button v-if="role !== 'customer' && o.status === 'READY_TO_PACK'" class="btn" :disabled="busy" @click="start(o)">开始打包</button>
-                  <button v-if="role !== 'customer' && o.status === 'READY_TO_SHIP'" class="btn btn-primary" :disabled="busy" @click="ship(o)">发货完成</button>
-                  <button v-if="can('order:create')" class="btn btn-primary" :disabled="busy" @click="openAdjust(o)">调整包裹</button>
+                  <button v-if="can('task:start') && o.status === 'READY_TO_PACK'" class="btn" :disabled="busy" @click="start(o)">开始打包</button>
+                  <button v-if="can('order:ship') && o.status === 'READY_TO_SHIP'" class="btn btn-primary" :disabled="busy" @click="ship(o)">发货完成</button>
+                  <button v-if="can('order:update')" class="btn btn-primary" :disabled="busy" @click="openAdjust(o)">调整包裹</button>
                 </div>
               </td>
             </tr>

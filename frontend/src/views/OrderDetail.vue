@@ -86,7 +86,7 @@
           </div>
         </article>
 
-        <article v-if="role !== 'customer'" class="card section-card">
+        <article v-if="can('price:update')" class="card section-card">
           <div class="section-head">
             <div>
               <div class="section-title">重量处理</div>
@@ -125,7 +125,7 @@
           </div>
         </article>
 
-        <article v-if="role !== 'customer'" class="card section-card">
+        <article v-if="can('task:complete') || can('order:ship')" class="card section-card">
           <div class="section-title">下一步动作</div>
           <div class="page-subtitle">高风险动作集中在这里，避免分散到列表页。</div>
           <div v-if="msg" :style="{ color: msgType === 'ok' ? 'var(--success)' : 'var(--danger)' }" class="section-note" style="margin-top: 10px;">
@@ -135,7 +135,7 @@
             <button v-if="can('task:complete') && order.status === 'PACKING'" class="btn btn-primary" :disabled="sending" @click="completePacking">
               打包完毕，转为待发货
             </button>
-            <button v-if="can('task:complete') && order.status === 'READY_TO_SHIP'" class="btn btn-primary" :disabled="sending" @click="shipAndNotify">
+            <button v-if="can('order:ship') && order.status === 'READY_TO_SHIP'" class="btn btn-primary" :disabled="sending" @click="shipAndNotify">
               发货完成并通知客户
             </button>
           </div>
@@ -256,8 +256,12 @@ async function refreshOrder() {
       desc: map.get(p.id)?.desc || '',
       note: map.get(p.id)?.note || '',
     }))
-    const tasks = await api.get(`/tasks?order_id=${id.value}`)
-    taskId.value = tasks[0]?.id ?? null
+    if (can('task:view')) {
+      const tasks = await api.get(`/tasks?order_id=${id.value}`)
+      taskId.value = tasks[0]?.id ?? null
+    } else {
+      taskId.value = null
+    }
   } catch {
     order.value = null
     taskId.value = null

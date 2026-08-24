@@ -72,6 +72,7 @@ PERMISSIONS: Dict[UserRole, set[str]] = {
         "order:view",
         "order:update",
         "order:ship",
+        "task:view",
         "customer:view",
         "price:update",
         "notification:view",
@@ -135,8 +136,8 @@ class OrderCreate(BaseModel):
 
 class PricePatch(BaseModel):
     actual_weight: float = Field(ge=0)
-    rate_per_kg: float
-    extra_fee: float = 0
+    rate_per_kg: float = Field(ge=0)
+    extra_fee: float = Field(default=0, ge=0)
 
 
 class VolumetricPatch(BaseModel):

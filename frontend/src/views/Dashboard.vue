@@ -111,7 +111,7 @@ async function refresh() {
     const parcelUrl = role.value === 'customer' ? `/parcels?customer_id=${customerId}` : '/parcels'
     const orderUrl = role.value === 'customer' ? `/orders?customer_id=${customerId}` : '/orders'
     const jobs = [api.get(parcelUrl), api.get(orderUrl)]
-    if (role.value === 'staff' || role.value === 'operator') jobs.push(api.get('/tasks'))
+    if (auth.can('task:view')) jobs.push(api.get('/tasks'))
     else jobs.push(Promise.resolve([]))
     if (role.value === 'operator') jobs.push(api.get('/notifications?type=ready_to_pack'))
     else jobs.push(Promise.resolve([]))
