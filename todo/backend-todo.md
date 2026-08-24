@@ -45,7 +45,8 @@
 
 - [x] Milestone 4.5：模块化单体重构
   - 已将 `backend/main.py` 收敛为兼容入口，保持既有 FastAPI app 与测试直接调用对象可导入。
-  - 已抽取配置、SQLite 连接、枚举、Pydantic schema、Token/当前用户/RBAC，以及订单计价、重量、异常和审计规则。
+  - 已抽取配置、SQLite 连接与 schema bootstrap、按领域拆分的 Pydantic schema、Token/当前用户/RBAC、共享 SQL repository，以及订单、包裹、任务、异常、结算和通知 service。
+  - `api/routes.py` 只负责应用装配和原有 HTTP 合同注册；业务实现不再集中在路由文件。
   - API 路径、SQLite 表结构、状态规则和前端调用方式均未改动；未引入 PostgreSQL、ORM、Alembic、消息队列、运输模型或 AI。
   - 已运行现有流程、异常、审计、权限测试和前端构建；后续仅在新业务变更时继续按领域拆分 repository 与 route handler。
 

@@ -56,7 +56,7 @@
 
 ## 常用接口约束
 
-常用接口由 `backend/app/api/routes.py` 注册，`backend.main` 保留兼容导出：
+常用接口由 `backend/app/api/routes.py` 装配并按领域导出，业务实现位于 `backend/app/services/`，`backend.main` 保留兼容导出：
 
 - `POST /auth/login`
 - `POST /parcels`

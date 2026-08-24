@@ -98,12 +98,13 @@ backend/
   main.py                 # Compatibility entry point and legacy test exports
   app/
     config.py             # SQLite, upload, and token configuration
-    api/routes.py         # Existing FastAPI paths and response contracts
+    api/                  # Application assembly plus auth/parcel/order/task/etc. route exports
     core/                 # Token, current-user, and RBAC helpers
-    db/connection.py      # SQLite connection factory
+    db/                   # SQLite connection factory and schema bootstrap/seed entry points
     models/enums.py       # Workflow, role, and exception enums
-    schemas/              # Pydantic request/response schemas
-    services/order_rules.py # Pricing, weight, exception, and audit rules
+    schemas/              # Auth, parcel, order, task, exception, and common Pydantic schemas
+    repositories/common.py # Existing SQL, row conversion, relation migration, and persistence helpers
+    services/             # Auth, parcel, order, task, exception, billing, and notification workflows
   requirements.txt
   tests/test_p0_flow.py   # Core workflow test cases
 frontend/
