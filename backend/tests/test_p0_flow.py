@@ -331,6 +331,106 @@ class BusinessRuleApiTests(unittest.TestCase):
         self.assertNotIn(other_parcel.id, [item["id"] for item in parcel.json()])
         self.assertEqual(other_order.status_code, 403)
 
+    def test_legacy_parcel_ids_migrate_to_relation_table_and_remain_in_api_response(self):
+        conn = main.get_conn()
+        try:
+            cursor = conn.execute(
+                """
+                INSERT INTO orders (
+                    customer_id, parcel_ids, status, actual_weight, final_price,
+                    volumetric_weight, forwarding, created_at, order_no
+                ) VALUES (?, ?, ?, 0, NULL, 0, NULL, ?, NULL)
+                """,
+                (1, "[1]", main.OrderStatus.DRAFT.value, main.utc_now_iso()),
+            )
+            order_id = cursor.lastrowid
+            conn.commit()
+            main.migrate_order_parcels(conn)
+            conn.commit()
+            relation_ids = main.get_order_parcel_ids(conn, order_id)
+            legacy_value = conn.execute(
+                "SELECT parcel_ids FROM orders WHERE id = ?", (order_id,)
+            ).fetchone()["parcel_ids"]
+        finally:
+            conn.close()
+
+        response = self.client.get(f"/orders/{order_id}", headers=self.auth_header(self.staff_user))
+        self.assertEqual(relation_ids, [1])
+        self.assertEqual(legacy_value, "[1]")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["parcel_ids"], [1])
+
+    def test_order_parcel_add_remove_release_and_reassignment(self):
+        order_id = self.create_order(parcel_ids=[1])
+        add = self.client.patch(
+            f"/orders/{order_id}/parcels",
+            headers=self.auth_header(self.staff_user),
+            json={"add": [2]},
+        )
+        remove = self.client.patch(
+            f"/orders/{order_id}/parcels",
+            headers=self.auth_header(self.staff_user),
+            json={"remove": [1]},
+        )
+        reassigned_order_id = self.create_order(parcel_ids=[1])
+
+        self.assertEqual(add.status_code, 200)
+        self.assertEqual(add.json()["parcel_ids"], [1, 2])
+        self.assertEqual(remove.status_code, 200)
+        self.assertEqual(remove.json()["parcel_ids"], [2])
+        conn = main.get_conn()
+        try:
+            self.assertEqual(main.get_order_parcel_ids(conn, order_id), [2])
+            self.assertEqual(main.get_order_parcel_ids(conn, reassigned_order_id), [1])
+            self.assertEqual(
+                conn.execute("SELECT parcel_ids FROM orders WHERE id = ?", (order_id,)).fetchone()[
+                    "parcel_ids"
+                ],
+                "[2]",
+            )
+        finally:
+            conn.close()
+
+    def test_order_parcel_relationship_rejects_duplicate_cross_customer_and_occupied_parcels(self):
+        duplicate = self.client.post(
+            "/orders",
+            headers=self.auth_header(self.staff_user),
+            json={"customer_id": 1, "parcel_ids": [1, 1]},
+        )
+        order_id = self.create_order(parcel_ids=[1])
+        occupied = self.client.post(
+            "/orders",
+            headers=self.auth_header(self.staff_user),
+            json={"customer_id": 1, "parcel_ids": [1]},
+        )
+        cross_customer_parcel = main.create_parcel(
+            main.ParcelCreate(customer_id=2, tracking_number="CROSS-CUSTOMER-PARCEL"),
+            user=self.staff_user,
+        )
+        cross_customer = self.client.patch(
+            f"/orders/{order_id}/parcels",
+            headers=self.auth_header(self.staff_user),
+            json={"add": [cross_customer_parcel.id]},
+        )
+
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(occupied.status_code, 400)
+        self.assertEqual(cross_customer.status_code, 400)
+
+    def test_relation_table_enforces_one_order_per_parcel(self):
+        first_order_id = self.create_order(parcel_ids=[1])
+        second_order_id = self.create_order(parcel_ids=[2])
+        conn = main.get_conn()
+        try:
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO order_parcels (order_id, parcel_id, created_at) VALUES (?, ?, ?)",
+                    (second_order_id, 1, main.utc_now_iso()),
+                )
+            self.assertEqual(main.get_order_parcel_ids(conn, first_order_id), [1])
+        finally:
+            conn.close()
+
     def test_parcel_status_transition_rejects_illegal_jump_and_unauthorized_role(self):
         illegal = self.client.patch(
             "/parcels/1/status",

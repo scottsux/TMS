@@ -257,12 +257,12 @@ def row_to_parcel(row: sqlite3.Row) -> Parcel:
     )
 
 
-def row_to_order(row: sqlite3.Row) -> Order:
+def row_to_order(row: sqlite3.Row, parcel_ids: Optional[List[int]] = None) -> Order:
     return Order(
         id=row["id"],
         customer_id=row["customer_id"],
         customer_name=row["customer_name"],
-        parcel_ids=[int(pid) for pid in decode_json(row["parcel_ids"]) or []],
+        parcel_ids=parcel_ids if parcel_ids is not None else [int(pid) for pid in decode_json(row["parcel_ids"]) or []],
         status=OrderStatus(row["status"]),
         actual_weight=float(row["actual_weight"] or 0),
         final_price=float(row["final_price"]) if row["final_price"] is not None else None,
@@ -316,15 +316,75 @@ def ensure_transition(old: ParcelStatus, new: ParcelStatus):
         raise HTTPException(status_code=400, detail=f"invalid transition {old} -> {new}")
 
 
+def get_order_parcel_ids(conn: sqlite3.Connection, order_id: int) -> List[int]:
+    rows = conn.execute(
+        "SELECT parcel_id FROM order_parcels WHERE order_id = ? ORDER BY rowid", (order_id,)
+    ).fetchall()
+    return [row["parcel_id"] for row in rows]
+
+
+def sync_legacy_order_parcel_ids(conn: sqlite3.Connection, order_id: int) -> List[int]:
+    parcel_ids = get_order_parcel_ids(conn, order_id)
+    conn.execute("UPDATE orders SET parcel_ids = ? WHERE id = ?", (encode_json(parcel_ids), order_id))
+    return parcel_ids
+
+
 def is_parcel_assigned(conn: sqlite3.Connection, pid: int, exclude_order_id: Optional[int] = None) -> bool:
-    rows = conn.execute("SELECT id, parcel_ids FROM orders").fetchall()
-    for row in rows:
-        if exclude_order_id is not None and row["id"] == exclude_order_id:
+    sql = "SELECT 1 FROM order_parcels WHERE parcel_id = ?"
+    params: list[Any] = [pid]
+    if exclude_order_id is not None:
+        sql += " AND order_id != ?"
+        params.append(exclude_order_id)
+    return conn.execute(sql, params).fetchone() is not None
+
+
+def validate_order_parcels(
+    conn: sqlite3.Connection,
+    customer_id: int,
+    parcel_ids: List[int],
+    exclude_order_id: Optional[int] = None,
+):
+    if len(parcel_ids) != len(set(parcel_ids)):
+        raise HTTPException(status_code=400, detail="parcel_ids must not contain duplicates")
+    for pid in parcel_ids:
+        parcel = get_parcel_or_404(conn, pid)
+        if parcel["customer_id"] != customer_id:
+            raise HTTPException(status_code=400, detail=f"parcel {pid} belongs to a different customer")
+        if is_parcel_assigned(conn, pid, exclude_order_id=exclude_order_id):
+            raise HTTPException(status_code=400, detail=f"parcel {pid} already in another order")
+
+
+def add_order_parcels(conn: sqlite3.Connection, order_id: int, parcel_ids: List[int]):
+    if parcel_ids:
+        conn.executemany(
+            "INSERT INTO order_parcels (order_id, parcel_id, created_at) VALUES (?, ?, ?)",
+            [(order_id, pid, utc_now_iso()) for pid in parcel_ids],
+        )
+
+
+def remove_order_parcels(conn: sqlite3.Connection, order_id: int, parcel_ids: List[int]):
+    if parcel_ids:
+        placeholders = ", ".join("?" for _ in parcel_ids)
+        conn.execute(
+            f"DELETE FROM order_parcels WHERE order_id = ? AND parcel_id IN ({placeholders})",
+            [order_id, *parcel_ids],
+        )
+
+
+def migrate_order_parcels(conn: sqlite3.Connection):
+    orders = conn.execute("SELECT id, parcel_ids FROM orders ORDER BY id").fetchall()
+    for order in orders:
+        legacy_ids = [int(pid) for pid in decode_json(order["parcel_ids"]) or []]
+        if len(legacy_ids) != len(set(legacy_ids)):
+            raise RuntimeError(f"order {order['id']} has duplicate legacy parcel IDs")
+        relation_ids = get_order_parcel_ids(conn, order["id"])
+        if relation_ids:
+            sync_legacy_order_parcel_ids(conn, order["id"])
             continue
-        parcel_ids = decode_json(row["parcel_ids"]) or []
-        if pid in parcel_ids:
-            return True
-    return False
+        for pid in legacy_ids:
+            if is_parcel_assigned(conn, pid):
+                raise RuntimeError(f"parcel {pid} is assigned to multiple legacy orders")
+        add_order_parcels(conn, order["id"], legacy_ids)
 
 
 def price_formula(actual_weight: float, rate_per_kg: float, extra_fee: float) -> float:
@@ -464,6 +524,7 @@ def create_order_record(
     status: OrderStatus = OrderStatus.DRAFT,
     forwarding: Optional[Dict[str, Any]] = None,
 ) -> Order:
+    validate_order_parcels(conn, customer_id, parcel_ids)
     now = utc_now_iso()
     cursor = conn.execute(
         """
@@ -475,12 +536,13 @@ def create_order_record(
         (customer_id, encode_json(parcel_ids), status.value, encode_json(forwarding), now),
     )
     order_id = cursor.lastrowid
+    add_order_parcels(conn, order_id, parcel_ids)
     conn.execute(
         "INSERT INTO tasks (order_id, status, actual_weight) VALUES (?, ?, NULL)",
         (order_id, TaskStatus.TODO.value),
     )
     conn.commit()
-    return row_to_order(get_order_or_404(conn, order_id))
+    return row_to_order(get_order_or_404(conn, order_id), get_order_parcel_ids(conn, order_id))
 
 
 def init_db():
@@ -533,6 +595,16 @@ def init_db():
                 FOREIGN KEY(customer_id) REFERENCES customers(id)
             );
 
+            CREATE TABLE IF NOT EXISTS order_parcels (
+                order_id INTEGER NOT NULL,
+                parcel_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(order_id, parcel_id),
+                UNIQUE(parcel_id),
+                FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE,
+                FOREIGN KEY(parcel_id) REFERENCES parcels(id)
+            );
+
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_id INTEGER NOT NULL,
@@ -552,6 +624,7 @@ def init_db():
             );
             """
         )
+        migrate_order_parcels(conn)
         conn.commit()
     finally:
         conn.close()
@@ -749,12 +822,6 @@ def create_order(body: OrderCreate, user: sqlite3.Row = Depends(require_permissi
     conn = get_conn()
     try:
         ensure_customer_exists(conn, body.customer_id)
-        for pid in body.parcel_ids:
-            parcel = get_parcel_or_404(conn, pid)
-            if parcel["customer_id"] != body.customer_id:
-                raise HTTPException(status_code=400, detail=f"parcel {pid} belongs to a different customer")
-            if is_parcel_assigned(conn, pid):
-                raise HTTPException(status_code=400, detail=f"parcel {pid} already in another order")
         return create_order_record(conn, body.customer_id, body.parcel_ids)
     finally:
         conn.close()
@@ -789,7 +856,7 @@ def list_orders(
         sql += " ORDER BY o.id DESC LIMIT ? OFFSET ?"
         params.extend([page_size, max(0, (page - 1) * page_size)])
         rows = conn.execute(sql, params).fetchall()
-        return [row_to_order(row) for row in rows]
+        return [row_to_order(row, get_order_parcel_ids(conn, row["id"])) for row in rows]
     finally:
         conn.close()
 
@@ -800,7 +867,7 @@ def get_order(oid: int, user: sqlite3.Row = Depends(require_permission("order:vi
     try:
         row = get_order_or_404(conn, oid)
         ensure_customer_scope(user, row["customer_id"])
-        return row_to_order(row)
+        return row_to_order(row, get_order_parcel_ids(conn, oid))
     finally:
         conn.close()
 
@@ -880,23 +947,18 @@ def patch_order_parcels(
     try:
         row = get_order_or_404(conn, oid)
         ensure_customer_scope(user, row["customer_id"])
-        current = [int(pid) for pid in decode_json(row["parcel_ids"]) or []]
-        if body.remove:
-            current = [pid for pid in current if pid not in set(body.remove)]
-        if body.add:
-            existing = set(current)
-            for pid in body.add:
-                parcel = get_parcel_or_404(conn, pid)
-                if parcel["customer_id"] != row["customer_id"]:
-                    raise HTTPException(status_code=400, detail=f"parcel {pid} belongs to a different customer")
-                if is_parcel_assigned(conn, pid, exclude_order_id=oid):
-                    raise HTTPException(status_code=400, detail=f"parcel {pid} already in another order")
-                if pid not in existing:
-                    current.append(pid)
-                    existing.add(pid)
-        conn.execute("UPDATE orders SET parcel_ids = ? WHERE id = ?", (encode_json(current), oid))
+        current = get_order_parcel_ids(conn, oid)
+        remove_ids = list(dict.fromkeys(body.remove or []))
+        add_ids = body.add or []
+        if len(add_ids) != len(set(add_ids)):
+            raise HTTPException(status_code=400, detail="parcel_ids must not contain duplicates")
+        add_ids = [pid for pid in add_ids if pid not in current]
+        validate_order_parcels(conn, row["customer_id"], add_ids, exclude_order_id=oid)
+        remove_order_parcels(conn, oid, remove_ids)
+        add_order_parcels(conn, oid, add_ids)
+        parcel_ids = sync_legacy_order_parcel_ids(conn, oid)
         conn.commit()
-        return row_to_order(get_order_or_404(conn, oid))
+        return row_to_order(get_order_or_404(conn, oid), parcel_ids)
     finally:
         conn.close()
 
@@ -1001,7 +1063,7 @@ def complete_task(
             (actual_weight if actual_weight is not None else order["actual_weight"], OrderStatus.READY_TO_SHIP.value, task["order_id"]),
         )
         now = utc_now_iso()
-        for pid in decode_json(order["parcel_ids"]) or []:
+        for pid in get_order_parcel_ids(conn, task["order_id"]):
             conn.execute(
                 "UPDATE parcels SET status = ?, packed_at = ? WHERE id = ?",
                 (ParcelStatus.PACKED.value, now, pid),
@@ -1023,7 +1085,7 @@ def ship_order(oid: int, user: sqlite3.Row = Depends(require_permission("order:s
         conn.execute("UPDATE orders SET status = ? WHERE id = ?", (OrderStatus.COMPLETED.value, oid))
         conn.execute("UPDATE tasks SET status = ? WHERE order_id = ?", (TaskStatus.DONE.value, oid))
         now = utc_now_iso()
-        for pid in decode_json(order["parcel_ids"]) or []:
+        for pid in get_order_parcel_ids(conn, oid):
             conn.execute("UPDATE parcels SET shipped_at = ? WHERE id = ?", (now, pid))
         conn.commit()
         return {"ok": True}
@@ -1131,16 +1193,14 @@ def notify_ready_to_pack(
 
         now_iso = utc_now_iso()
         if draft is not None:
-            current = [int(pid) for pid in decode_json(draft["parcel_ids"]) or []]
-            current_ids = set(current)
-            for row in selectable:
-                if row["id"] not in current_ids:
-                    current.append(row["id"])
-                    current_ids.add(row["id"])
+            current_ids = set(get_order_parcel_ids(conn, draft["id"]))
+            add_ids = [row["id"] for row in selectable if row["id"] not in current_ids]
+            validate_order_parcels(conn, body.customer_id, add_ids, exclude_order_id=draft["id"])
+            add_order_parcels(conn, draft["id"], add_ids)
+            sync_legacy_order_parcel_ids(conn, draft["id"])
             conn.execute(
-                "UPDATE orders SET parcel_ids = ?, status = ?, forwarding = ? WHERE id = ?",
+                "UPDATE orders SET status = ?, forwarding = ? WHERE id = ?",
                 (
-                    encode_json(current),
                     OrderStatus.READY_TO_PACK.value,
                     encode_json(
                         {

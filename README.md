@@ -43,7 +43,7 @@ receipt.
 
 - **Authentication and API authorization:** email/password login, PBKDF2 password verification, signed HMAC token, and server-side role checks.
 - **Parcel intake:** unique tracking-number validation, customer-scoped parcel access, parcel status updates, and image-upload validation (up to five PNG/JPEG/WebP files, 5 MB each).
-- **Order consolidation:** create an order from eligible parcels, prevent cross-customer or duplicate assignment, and save forwarding/consignee information as an order snapshot.
+- **Order consolidation:** use the canonical `order_parcels` relation table to create, add, remove, and release parcel assignments; each parcel can belong to only one order. The legacy `parcel_ids` response field remains synchronized for compatibility.
 - **Warehouse task flow:** create one packing task per order, start packing, record actual weight, and synchronize task/order/parcel states.
 - **Shipping and notifications:** complete shipment for ready-to-ship orders and store customer-oriented notification payloads.
 - **Settlement:** calculate `actual_weight × rate_per_kg + extra_fee` and allow a staff user to override the final price.
@@ -60,7 +60,7 @@ FastAPI monolith (REST APIs, RBAC, state transitions)
               |
       Python sqlite3 / SQLite
               |
-customers, users, parcels, orders, tasks, notifications
+customers, users, parcels, orders, order_parcels, tasks, notifications
 ```
 
 ### Technology stack
@@ -168,7 +168,7 @@ These limitations are intentional to keep the project honest as an MVP:
 - No carrier API, tracking-number lifecycle, shipment-tracking events, warehouse inventory, payment, customs, or label generation.
 - File uploads are demo files stored under `/tmp/tms_uploads`; there is no object storage, metadata table, preview URL, deletion flow, or cleanup policy.
 - SQLite schema is initialized in application code; there are no migrations, ORM, connection pool, or production database configuration.
-- Orders store parcel references as a JSON ID list rather than a normalized order-parcel join table.
+- `order_parcels` is the canonical order-to-parcel relation. The legacy `orders.parcel_ids` JSON column remains synchronized temporarily for API compatibility; it is not the source of truth.
 - The service is a single FastAPI module without Docker, CI/CD, observability, rate limiting, or production secret management.
 - The current frontend permission map and several visible actions need further alignment with the backend permission map before production use.
 - The billing page's price-override history is stored in browser `localStorage`, not as a server-side audit trail.
