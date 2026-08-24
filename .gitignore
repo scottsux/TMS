@@ -7,3 +7,4 @@ problems.md
 backend/tms.db
 backend/__pycache__/
 backend/tests/__pycache__/
+backend/.venv
