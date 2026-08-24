@@ -8,3 +8,6 @@ backend/tms.db
 backend/__pycache__/
 backend/tests/__pycache__/
 backend/.venv
+MANUAL_TEST_PLAN.md
+1.md
+tms.py
