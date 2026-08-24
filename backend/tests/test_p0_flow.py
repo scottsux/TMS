@@ -193,8 +193,20 @@ class BusinessRuleApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.json()["id"]
 
+    def set_order_state(self, order_id: int, status: main.OrderStatus, actual_weight: float = 0):
+        conn = main.get_conn()
+        try:
+            conn.execute(
+                "UPDATE orders SET status = ?, actual_weight = ? WHERE id = ?",
+                (status.value, actual_weight, order_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_price_formula_rounds_and_persists(self):
         order_id = self.create_order()
+        self.set_order_state(order_id, main.OrderStatus.COMPLETED, actual_weight=1.25)
 
         response = self.client.patch(
             f"/orders/{order_id}/price",
@@ -229,20 +241,21 @@ class BusinessRuleApiTests(unittest.TestCase):
 
     def test_manual_price_override_requires_staff_and_rejects_negative_value(self):
         order_id = self.create_order()
+        self.set_order_state(order_id, main.OrderStatus.COMPLETED)
         staff_response = self.client.patch(
             f"/orders/{order_id}/override_price",
             headers=self.auth_header(self.staff_user),
-            json={"final_price": 42.5},
+            json={"final_price": 42.5, "reason": "customer service adjustment"},
         )
         customer_response = self.client.patch(
             f"/orders/{order_id}/override_price",
             headers=self.auth_header(self.customer_user),
-            json={"final_price": 42.5},
+            json={"final_price": 42.5, "reason": "customer service adjustment"},
         )
         negative_response = self.client.patch(
             f"/orders/{order_id}/override_price",
             headers=self.auth_header(self.staff_user),
-            json={"final_price": -0.01},
+            json={"final_price": -0.01, "reason": "invalid negative price"},
         )
 
         self.assertEqual(staff_response.status_code, 200)
@@ -252,6 +265,7 @@ class BusinessRuleApiTests(unittest.TestCase):
 
     def test_actual_and_volumetric_weight_persist_and_require_staff(self):
         order_id = self.create_order()
+        self.set_order_state(order_id, main.OrderStatus.PACKING)
         actual_response = self.client.patch(
             f"/orders/{order_id}/actual_weight",
             headers=self.auth_header(self.staff_user),
@@ -430,6 +444,125 @@ class BusinessRuleApiTests(unittest.TestCase):
             self.assertEqual(main.get_order_parcel_ids(conn, first_order_id), [1])
         finally:
             conn.close()
+
+    def test_open_exception_blocks_shipping_and_pricing_until_staff_resolves_it(self):
+        order_id = self.create_order()
+        self.set_order_state(order_id, main.OrderStatus.READY_TO_SHIP, actual_weight=2)
+        created = self.client.post(
+            f"/orders/{order_id}/exceptions",
+            headers=self.auth_header(self.customer_user),
+            json={"type": "PRICE_DISPUTE", "reason": "price needs review"},
+        )
+        exception_id = created.json()["id"]
+        ship = self.client.patch(f"/orders/{order_id}/ship", headers=self.auth_header(self.staff_user))
+        self.set_order_state(order_id, main.OrderStatus.COMPLETED, actual_weight=2)
+        price = self.client.patch(
+            f"/orders/{order_id}/price",
+            headers=self.auth_header(self.staff_user),
+            json={"rate_per_kg": 10, "extra_fee": 0},
+        )
+        resolved = self.client.patch(
+            f"/exceptions/{exception_id}/resolve",
+            headers=self.auth_header(self.staff_user),
+            json={"resolution_note": "pricing confirmed with customer"},
+        )
+        priced_after_resolution = self.client.patch(
+            f"/orders/{order_id}/price",
+            headers=self.auth_header(self.staff_user),
+            json={"rate_per_kg": 10, "extra_fee": 0},
+        )
+
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(ship.status_code, 400)
+        self.assertEqual(price.status_code, 400)
+        self.assertEqual(resolved.status_code, 200)
+        self.assertEqual(priced_after_resolution.status_code, 200)
+
+    def test_exception_type_permissions_and_resolution_audit(self):
+        order_id = self.create_order()
+        customer_forbidden = self.client.post(
+            f"/orders/{order_id}/exceptions",
+            headers=self.auth_header(self.customer_user),
+            json={"type": "DAMAGED", "reason": "customer cannot report this type"},
+        )
+        operator_created = self.client.post(
+            f"/orders/{order_id}/exceptions",
+            headers=self.auth_header(self.operator_user),
+            json={"type": "DAMAGED", "reason": "outer box damaged"},
+        )
+        exception_id = operator_created.json()["id"]
+        operator_resolve = self.client.patch(
+            f"/exceptions/{exception_id}/resolve",
+            headers=self.auth_header(self.operator_user),
+            json={"resolution_note": "operator cannot resolve"},
+        )
+        staff_resolve = self.client.patch(
+            f"/exceptions/{exception_id}/resolve",
+            headers=self.auth_header(self.staff_user),
+            json={"resolution_note": "damage reviewed and repacked"},
+        )
+        audits = self.client.get(f"/orders/{order_id}/audits", headers=self.auth_header(self.staff_user))
+
+        self.assertEqual(customer_forbidden.status_code, 403)
+        self.assertEqual(operator_created.status_code, 200)
+        self.assertEqual(operator_resolve.status_code, 403)
+        self.assertEqual(staff_resolve.status_code, 200)
+        self.assertEqual([item["action"] for item in audits.json()][:2], ["exception:resolve", "exception:create"])
+
+    def test_weight_and_price_rules_create_server_audits(self):
+        order_id = self.create_order()
+        self.set_order_state(order_id, main.OrderStatus.PACKING)
+        operator_actual = self.client.patch(
+            f"/orders/{order_id}/actual_weight",
+            headers=self.auth_header(self.operator_user),
+            json={"actual_weight": 1.5},
+        )
+        operator_volume = self.client.patch(
+            f"/orders/{order_id}/volumetric",
+            headers=self.auth_header(self.operator_user),
+            json={"volumetric_weight": 2.1},
+        )
+        self.set_order_state(order_id, main.OrderStatus.READY_TO_SHIP, actual_weight=1.5)
+        staff_actual = self.client.patch(
+            f"/orders/{order_id}/actual_weight",
+            headers=self.auth_header(self.staff_user),
+            json={"actual_weight": 1.6},
+        )
+        operator_late = self.client.patch(
+            f"/orders/{order_id}/actual_weight",
+            headers=self.auth_header(self.operator_user),
+            json={"actual_weight": 1.7},
+        )
+        self.set_order_state(order_id, main.OrderStatus.COMPLETED, actual_weight=1.6)
+        completed_weight = self.client.patch(
+            f"/orders/{order_id}/actual_weight",
+            headers=self.auth_header(self.staff_user),
+            json={"actual_weight": 1.7},
+        )
+        price = self.client.patch(
+            f"/orders/{order_id}/price",
+            headers=self.auth_header(self.staff_user),
+            json={"rate_per_kg": 10, "extra_fee": 1, "reason": "standard completed-order rate"},
+        )
+        override = self.client.patch(
+            f"/orders/{order_id}/override_price",
+            headers=self.auth_header(self.staff_user),
+            json={"final_price": 18, "reason": "approved goodwill adjustment"},
+        )
+        audits = self.client.get(f"/orders/{order_id}/audits", headers=self.auth_header(self.staff_user))
+
+        self.assertEqual(operator_actual.status_code, 200)
+        self.assertEqual(operator_volume.status_code, 200)
+        self.assertEqual(staff_actual.status_code, 200)
+        self.assertEqual(operator_late.status_code, 400)
+        self.assertEqual(completed_weight.status_code, 400)
+        self.assertEqual(price.status_code, 200)
+        self.assertEqual(override.status_code, 200)
+        actions = [item["action"] for item in audits.json()]
+        self.assertIn("weight:actual_update", actions)
+        self.assertIn("weight:volumetric_update", actions)
+        self.assertIn("price:calculate", actions)
+        self.assertIn("price:override", actions)
 
     def test_parcel_status_transition_rejects_illegal_jump_and_unauthorized_role(self):
         illegal = self.client.patch(

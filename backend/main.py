@@ -55,6 +55,19 @@ class TaskStatus(str, Enum):
     DONE = "DONE"
 
 
+class ExceptionType(str, Enum):
+    CUSTOMER_CANCEL = "CUSTOMER_CANCEL"
+    ADDRESS_ERROR = "ADDRESS_ERROR"
+    DAMAGED = "DAMAGED"
+    PROHIBITED = "PROHIBITED"
+    PRICE_DISPUTE = "PRICE_DISPUTE"
+
+
+class ExceptionStatus(str, Enum):
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"
+
+
 class UserRole(str, Enum):
     customer = "customer"
     staff = "staff"
@@ -62,7 +75,14 @@ class UserRole(str, Enum):
 
 
 PERMISSIONS: Dict[UserRole, set[str]] = {
-    UserRole.customer: {"parcel:create", "parcel:view", "order:view", "notification:create"},
+    UserRole.customer: {
+        "parcel:create",
+        "parcel:view",
+        "order:view",
+        "notification:create",
+        "exception:create",
+        "exception:view",
+    },
     UserRole.staff: {
         "parcel:create",
         "parcel:view",
@@ -75,6 +95,11 @@ PERMISSIONS: Dict[UserRole, set[str]] = {
         "task:view",
         "customer:view",
         "price:update",
+        "weight:update",
+        "exception:create",
+        "exception:view",
+        "exception:resolve",
+        "audit:view",
         "notification:view",
         "notification:clear",
     },
@@ -85,6 +110,9 @@ PERMISSIONS: Dict[UserRole, set[str]] = {
         "task:start",
         "task:complete",
         "notification:view",
+        "weight:update",
+        "exception:create",
+        "exception:view",
     },
 }
 
@@ -135,9 +163,10 @@ class OrderCreate(BaseModel):
 
 
 class PricePatch(BaseModel):
-    actual_weight: float = Field(ge=0)
+    actual_weight: Optional[float] = Field(default=None, ge=0)
     rate_per_kg: float = Field(ge=0)
     extra_fee: float = Field(default=0, ge=0)
+    reason: Optional[str] = None
 
 
 class VolumetricPatch(BaseModel):
@@ -150,6 +179,7 @@ class ActualWeightPatch(BaseModel):
 
 class OverridePrice(BaseModel):
     final_price: float = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class OrderNoPatch(BaseModel):
@@ -159,6 +189,15 @@ class OrderNoPatch(BaseModel):
 class OrderParcelsPatch(BaseModel):
     add: Optional[List[int]] = None
     remove: Optional[List[int]] = None
+
+
+class OrderExceptionCreate(BaseModel):
+    type: ExceptionType
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class OrderExceptionResolve(BaseModel):
+    resolution_note: str = Field(min_length=1, max_length=1000)
 
 
 class Order(BaseModel):
@@ -391,6 +430,70 @@ def price_formula(actual_weight: float, rate_per_kg: float, extra_fee: float) ->
     return round(actual_weight * rate_per_kg + extra_fee, 2)
 
 
+def encode_audit_value(value: Optional[Dict[str, Any]]) -> Optional[str]:
+    return encode_json(value) if value is not None else None
+
+
+def record_order_audit(
+    conn: sqlite3.Connection,
+    order_id: int,
+    action: str,
+    actor_id: int,
+    before_value: Optional[Dict[str, Any]] = None,
+    after_value: Optional[Dict[str, Any]] = None,
+    reason: Optional[str] = None,
+    exception_id: Optional[int] = None,
+):
+    conn.execute(
+        """
+        INSERT INTO order_audits (
+            order_id, exception_id, action, actor_id, created_at, before_value, after_value, reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            order_id,
+            exception_id,
+            action,
+            actor_id,
+            utc_now_iso(),
+            encode_audit_value(before_value),
+            encode_audit_value(after_value),
+            reason,
+        ),
+    )
+
+
+def ensure_no_open_exceptions(conn: sqlite3.Connection, order_id: int):
+    row = conn.execute(
+        "SELECT 1 FROM order_exceptions WHERE order_id = ? AND status = ?",
+        (order_id, ExceptionStatus.OPEN.value),
+    ).fetchone()
+    if row:
+        raise HTTPException(status_code=400, detail="order has unresolved exceptions")
+
+
+def ensure_weight_update_allowed(order: sqlite3.Row, user: sqlite3.Row):
+    status = OrderStatus(order["status"])
+    role = UserRole(user["role"])
+    if role == UserRole.operator and status == OrderStatus.PACKING:
+        return
+    if role == UserRole.staff and status in {OrderStatus.PACKING, OrderStatus.READY_TO_SHIP}:
+        return
+    raise HTTPException(status_code=400, detail="weight cannot be updated in the current order status")
+
+
+def exception_types_for_role(role: UserRole) -> set[ExceptionType]:
+    if role == UserRole.customer:
+        return {
+            ExceptionType.CUSTOMER_CANCEL,
+            ExceptionType.ADDRESS_ERROR,
+            ExceptionType.PRICE_DISPUTE,
+        }
+    if role == UserRole.operator:
+        return {ExceptionType.DAMAGED, ExceptionType.PROHIBITED}
+    return set(ExceptionType)
+
+
 def make_password_hash(password: str, salt: Optional[str] = None) -> str:
     raw_salt = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), raw_salt.encode("utf-8"), PBKDF2_ROUNDS)
@@ -621,6 +724,37 @@ def init_db():
                 created_at TEXT NOT NULL,
                 UNIQUE(type, customer_id),
                 FOREIGN KEY(customer_id) REFERENCES customers(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS order_exceptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                resolved_by INTEGER,
+                resolution_note TEXT,
+                resolved_at TEXT,
+                FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE,
+                FOREIGN KEY(created_by) REFERENCES users(id),
+                FOREIGN KEY(resolved_by) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS order_audits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL,
+                exception_id INTEGER,
+                action TEXT NOT NULL,
+                actor_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                before_value TEXT,
+                after_value TEXT,
+                reason TEXT,
+                FOREIGN KEY(order_id) REFERENCES orders(id) ON DELETE CASCADE,
+                FOREIGN KEY(exception_id) REFERENCES order_exceptions(id) ON DELETE SET NULL,
+                FOREIGN KEY(actor_id) REFERENCES users(id)
             );
             """
         )
@@ -882,10 +1016,32 @@ def patch_order_price(
     try:
         row = get_order_or_404(conn, oid)
         ensure_customer_scope(user, row["customer_id"])
-        final_price = price_formula(body.actual_weight, body.rate_per_kg, body.extra_fee)
+        if row["status"] != OrderStatus.COMPLETED.value:
+            raise HTTPException(status_code=400, detail="only completed orders can be priced")
+        ensure_no_open_exceptions(conn, oid)
+        actual_weight = float(row["actual_weight"] or 0)
+        if body.actual_weight is not None and float(body.actual_weight) != actual_weight:
+            raise HTTPException(status_code=400, detail="completed order weight cannot be changed during pricing")
+        final_price = price_formula(actual_weight, body.rate_per_kg, body.extra_fee)
+        before_value = {"actual_weight": actual_weight, "final_price": row["final_price"]}
+        after_value = {
+            "actual_weight": actual_weight,
+            "rate_per_kg": float(body.rate_per_kg),
+            "extra_fee": float(body.extra_fee),
+            "final_price": final_price,
+        }
         conn.execute(
-            "UPDATE orders SET actual_weight = ?, final_price = ? WHERE id = ?",
-            (float(body.actual_weight), final_price, oid),
+            "UPDATE orders SET final_price = ? WHERE id = ?",
+            (final_price, oid),
+        )
+        record_order_audit(
+            conn,
+            oid,
+            "price:calculate",
+            user["id"],
+            before_value,
+            after_value,
+            body.reason.strip() if body.reason else "automatic price calculation",
         )
         conn.commit()
         return {"final_price": final_price}
@@ -897,17 +1053,26 @@ def patch_order_price(
 def patch_order_volumetric(
     oid: int,
     body: VolumetricPatch,
-    user: sqlite3.Row = Depends(require_permission("price:update")),
+    user: sqlite3.Row = Depends(require_permission("weight:update")),
 ):
     conn = get_conn()
     try:
         row = get_order_or_404(conn, oid)
         ensure_customer_scope(user, row["customer_id"])
+        ensure_weight_update_allowed(row, user)
         forwarding = decode_json(row["forwarding"]) or {}
         forwarding["volumetric_weight"] = float(body.volumetric_weight)
         conn.execute(
             "UPDATE orders SET volumetric_weight = ?, forwarding = ? WHERE id = ?",
             (float(body.volumetric_weight), encode_json(forwarding), oid),
+        )
+        record_order_audit(
+            conn,
+            oid,
+            "weight:volumetric_update",
+            user["id"],
+            {"volumetric_weight": float(row["volumetric_weight"] or 0)},
+            {"volumetric_weight": float(body.volumetric_weight)},
         )
         conn.commit()
         return {"volumetric_weight": float(body.volumetric_weight)}
@@ -919,17 +1084,26 @@ def patch_order_volumetric(
 def patch_order_actual_weight(
     oid: int,
     body: ActualWeightPatch,
-    user: sqlite3.Row = Depends(require_permission("price:update")),
+    user: sqlite3.Row = Depends(require_permission("weight:update")),
 ):
     conn = get_conn()
     try:
         row = get_order_or_404(conn, oid)
         ensure_customer_scope(user, row["customer_id"])
+        ensure_weight_update_allowed(row, user)
         forwarding = decode_json(row["forwarding"]) or {}
         forwarding["actual_weight"] = float(body.actual_weight)
         conn.execute(
             "UPDATE orders SET actual_weight = ?, forwarding = ? WHERE id = ?",
             (float(body.actual_weight), encode_json(forwarding), oid),
+        )
+        record_order_audit(
+            conn,
+            oid,
+            "weight:actual_update",
+            user["id"],
+            {"actual_weight": float(row["actual_weight"] or 0)},
+            {"actual_weight": float(body.actual_weight)},
         )
         conn.commit()
         return {"actual_weight": float(body.actual_weight)}
@@ -973,8 +1147,20 @@ def override_price(
     try:
         row = get_order_or_404(conn, oid)
         ensure_customer_scope(user, row["customer_id"])
+        if row["status"] != OrderStatus.COMPLETED.value:
+            raise HTTPException(status_code=400, detail="only completed orders can be repriced")
+        ensure_no_open_exceptions(conn, oid)
         value = round(float(body.final_price), 2)
         conn.execute("UPDATE orders SET final_price = ? WHERE id = ?", (value, oid))
+        record_order_audit(
+            conn,
+            oid,
+            "price:override",
+            user["id"],
+            {"final_price": row["final_price"]},
+            {"final_price": value},
+            body.reason.strip(),
+        )
         conn.commit()
         return {"final_price": value}
     finally:
@@ -995,6 +1181,165 @@ def patch_order_no(
         conn.execute("UPDATE orders SET order_no = ? WHERE id = ?", (value, oid))
         conn.commit()
         return {"order_no": value}
+    finally:
+        conn.close()
+
+
+@app.post("/orders/{oid}/exceptions")
+def create_order_exception(
+    oid: int,
+    body: OrderExceptionCreate,
+    user: sqlite3.Row = Depends(require_permission("exception:create")),
+):
+    conn = get_conn()
+    try:
+        order = get_order_or_404(conn, oid)
+        ensure_customer_scope(user, order["customer_id"])
+        role = UserRole(user["role"])
+        if body.type not in exception_types_for_role(role):
+            raise HTTPException(status_code=403, detail="exception type is not allowed for this role")
+        cursor = conn.execute(
+            """
+            INSERT INTO order_exceptions (order_id, type, status, reason, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (oid, body.type.value, ExceptionStatus.OPEN.value, body.reason.strip(), user["id"], utc_now_iso()),
+        )
+        exception_id = cursor.lastrowid
+        record_order_audit(
+            conn,
+            oid,
+            "exception:create",
+            user["id"],
+            after_value={"type": body.type.value, "status": ExceptionStatus.OPEN.value},
+            reason=body.reason.strip(),
+            exception_id=exception_id,
+        )
+        conn.commit()
+        return {"id": exception_id, "status": ExceptionStatus.OPEN.value}
+    finally:
+        conn.close()
+
+
+@app.get("/orders/{oid}/exceptions")
+def list_order_exceptions(
+    oid: int,
+    user: sqlite3.Row = Depends(require_permission("exception:view")),
+):
+    conn = get_conn()
+    try:
+        order = get_order_or_404(conn, oid)
+        ensure_customer_scope(user, order["customer_id"])
+        rows = conn.execute(
+            """
+            SELECT e.*, creator.email AS created_by_email, resolver.email AS resolved_by_email
+            FROM order_exceptions e
+            JOIN users creator ON creator.id = e.created_by
+            LEFT JOIN users resolver ON resolver.id = e.resolved_by
+            WHERE e.order_id = ?
+            ORDER BY e.id DESC
+            """,
+            (oid,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@app.get("/exceptions")
+def list_exceptions(
+    status: Optional[ExceptionStatus] = None,
+    user: sqlite3.Row = Depends(require_permission("exception:view")),
+):
+    conn = get_conn()
+    try:
+        sql = """
+            SELECT e.*, o.customer_id, o.order_no, creator.email AS created_by_email,
+                   resolver.email AS resolved_by_email
+            FROM order_exceptions e
+            JOIN orders o ON o.id = e.order_id
+            JOIN users creator ON creator.id = e.created_by
+            LEFT JOIN users resolver ON resolver.id = e.resolved_by
+            WHERE 1 = 1
+        """
+        params: list[Any] = []
+        if user["role"] == UserRole.customer.value:
+            sql += " AND o.customer_id = ?"
+            params.append(user["customer_id"])
+        if status is not None:
+            sql += " AND e.status = ?"
+            params.append(status.value)
+        sql += " ORDER BY CASE e.status WHEN 'OPEN' THEN 0 ELSE 1 END, e.id DESC"
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@app.patch("/exceptions/{eid}/resolve")
+def resolve_order_exception(
+    eid: int,
+    body: OrderExceptionResolve,
+    user: sqlite3.Row = Depends(require_permission("exception:resolve")),
+):
+    conn = get_conn()
+    try:
+        exception = conn.execute("SELECT * FROM order_exceptions WHERE id = ?", (eid,)).fetchone()
+        if not exception:
+            raise HTTPException(status_code=404, detail="order exception not found")
+        if exception["status"] != ExceptionStatus.OPEN.value:
+            raise HTTPException(status_code=400, detail="exception is already resolved")
+        resolved_at = utc_now_iso()
+        conn.execute(
+            """
+            UPDATE order_exceptions
+            SET status = ?, resolved_by = ?, resolution_note = ?, resolved_at = ?
+            WHERE id = ?
+            """,
+            (ExceptionStatus.RESOLVED.value, user["id"], body.resolution_note.strip(), resolved_at, eid),
+        )
+        record_order_audit(
+            conn,
+            exception["order_id"],
+            "exception:resolve",
+            user["id"],
+            before_value={"status": ExceptionStatus.OPEN.value},
+            after_value={"status": ExceptionStatus.RESOLVED.value},
+            reason=body.resolution_note.strip(),
+            exception_id=eid,
+        )
+        conn.commit()
+        return {"ok": True, "status": ExceptionStatus.RESOLVED.value, "resolved_at": resolved_at}
+    finally:
+        conn.close()
+
+
+@app.get("/orders/{oid}/audits")
+def list_order_audits(
+    oid: int,
+    user: sqlite3.Row = Depends(require_permission("audit:view")),
+):
+    conn = get_conn()
+    try:
+        order = get_order_or_404(conn, oid)
+        ensure_customer_scope(user, order["customer_id"])
+        rows = conn.execute(
+            """
+            SELECT a.*, u.email AS actor_email
+            FROM order_audits a
+            JOIN users u ON u.id = a.actor_id
+            WHERE a.order_id = ?
+            ORDER BY a.id DESC
+            """,
+            (oid,),
+        ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            item["before_value"] = decode_json(item["before_value"])
+            item["after_value"] = decode_json(item["after_value"])
+            items.append(item)
+        return items
     finally:
         conn.close()
 
@@ -1062,6 +1407,16 @@ def complete_task(
             "UPDATE orders SET actual_weight = ?, status = ? WHERE id = ?",
             (actual_weight if actual_weight is not None else order["actual_weight"], OrderStatus.READY_TO_SHIP.value, task["order_id"]),
         )
+        if actual_weight is not None and float(order["actual_weight"] or 0) != actual_weight:
+            record_order_audit(
+                conn,
+                task["order_id"],
+                "weight:actual_update",
+                user["id"],
+                {"actual_weight": float(order["actual_weight"] or 0)},
+                {"actual_weight": actual_weight},
+                "packing completion",
+            )
         now = utc_now_iso()
         for pid in get_order_parcel_ids(conn, task["order_id"]):
             conn.execute(
@@ -1082,6 +1437,7 @@ def ship_order(oid: int, user: sqlite3.Row = Depends(require_permission("order:s
         ensure_customer_scope(user, order["customer_id"])
         if order["status"] != OrderStatus.READY_TO_SHIP.value:
             raise HTTPException(status_code=400, detail="order is not ready to ship")
+        ensure_no_open_exceptions(conn, oid)
         conn.execute("UPDATE orders SET status = ? WHERE id = ?", (OrderStatus.COMPLETED.value, oid))
         conn.execute("UPDATE tasks SET status = ? WHERE order_id = ?", (TaskStatus.DONE.value, oid))
         now = utc_now_iso()

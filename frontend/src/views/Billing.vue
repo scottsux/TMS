@@ -21,7 +21,7 @@
       </article>
       <article class="metric-card">
         <div class="metric-label">人工覆盖次数</div>
-        <div class="metric-value">{{ overrides.length }}</div>
+        <div class="metric-value">{{ audits.filter((item) => item.action === 'price:override').length }}</div>
       </article>
     </section>
 
@@ -75,7 +75,7 @@
           <div class="grid gap-3 md:grid-cols-3">
             <div>
               <label class="field-label">实际重量(kg)</label>
-              <input v-model.number="actual_weight" class="input" type="number" min="0" step="0.01" />
+              <input :value="actual_weight.toFixed(2)" class="input" disabled />
             </div>
             <div>
               <label class="field-label">单价</label>
@@ -90,9 +90,10 @@
             <div class="summary-row"><span>自动计算结果</span><strong>${{ final_price.toFixed(2) }}</strong></div>
             <div class="summary-row"><span>人工覆盖价格</span><input v-model.number="override_price" class="input compact-input" type="number" min="0" step="0.01" /></div>
           </div>
+          <div><label class="field-label">计价 / 改价说明</label><textarea v-model.trim="priceReason" class="input reason-input" rows="2" placeholder="人工改价必填；自动计价可选" /></div>
           <div class="page-actions" style="justify-content: flex-end;">
             <button class="btn" :disabled="!selectedOrder || busy" @click="applyPrice">保存计价</button>
-            <button class="btn btn-primary" :disabled="!selectedOrder || busy || override_price === null" @click="applyOverride">覆盖最终价格</button>
+            <button class="btn btn-primary" :disabled="!selectedOrder || busy || override_price === null || !priceReason" @click="applyOverride">覆盖最终价格</button>
           </div>
           <div v-if="message" :style="{ color: messageType === 'ok' ? 'var(--success)' : 'var(--danger)' }" class="section-note">{{ message }}</div>
         </div>
@@ -102,28 +103,32 @@
     <section class="card section-card" style="margin-top: 16px;">
       <div class="section-head">
         <div>
-          <div class="section-title">人工覆盖记录</div>
-          <div class="page-subtitle">MVP 阶段保存在前端，用于追踪价格调整。</div>
+          <div class="section-title">服务端结算审计</div>
+          <div class="page-subtitle">显示选中订单的自动计价和人工改价记录。</div>
         </div>
       </div>
       <div class="table-wrap">
-        <table v-if="overrides.length" class="table">
+        <table v-if="audits.length" class="table">
           <thead>
             <tr>
               <th>时间</th>
-              <th>订单</th>
-              <th class="num">覆盖价格</th>
+              <th>操作</th>
+              <th>操作人</th>
+              <th>原因</th>
+              <th class="num">结果</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in overrides" :key="`${item.id}-${item.ts}`">
-              <td>{{ item.ts }}</td>
-              <td>{{ item.order_no }}</td>
-              <td class="num">${{ item.price.toFixed(2) }}</td>
+            <tr v-for="item in audits" :key="item.id">
+              <td>{{ dateTime(item.created_at) }}</td>
+              <td>{{ item.action === 'price:override' ? '人工改价' : '自动计价' }}</td>
+              <td>{{ item.actor_email }}</td>
+              <td>{{ item.reason || '-' }}</td>
+              <td class="num">${{ Number(item.after_value?.final_price || 0).toFixed(2) }}</td>
             </tr>
           </tbody>
         </table>
-        <EmptyState v-else title="暂无覆盖记录" description="当员工手动修改最终价格后，这里会出现记录。" />
+        <EmptyState v-else title="暂无结算审计记录" description="选择订单并完成计价或改价后，这里会显示服务端记录。" />
       </div>
     </section>
   </div>
@@ -144,12 +149,10 @@ const extra_fee = ref(0)
 const override_price = ref(null)
 const message = ref('')
 const messageType = ref('ok')
-const overrides = ref([])
+const audits = ref([])
+const priceReason = ref('')
 
-onMounted(async () => {
-  loadOverrides()
-  await refresh()
-})
+onMounted(refresh)
 
 const completedOrders = computed(() => rows.value.filter((row) => row.status === 'COMPLETED'))
 const pendingAmount = computed(() => completedOrders.value.reduce((sum, row) => sum + (row.final_price || 0), 0))
@@ -174,11 +177,13 @@ async function refresh() {
   }
 }
 
-function selectOrder(order) {
+async function selectOrder(order) {
   selectedOrder.value = order
   actual_weight.value = Number(order.actual_weight || 0)
   override_price.value = order.final_price ?? null
+  priceReason.value = ''
   message.value = ''
+  try { audits.value = await api.get(`/orders/${order.id}/audits`) } catch { audits.value = [] }
 }
 
 async function applyPrice() {
@@ -189,10 +194,12 @@ async function applyPrice() {
       actual_weight: Number(actual_weight.value) || 0,
       rate_per_kg: Number(rate_per_kg.value) || 0,
       extra_fee: Number(extra_fee.value) || 0,
+      reason: priceReason.value,
     })
     message.value = '已保存自动计价结果'
     messageType.value = 'ok'
     await refresh()
+    await selectOrder(selectedOrder.value)
   } catch (error) {
     message.value = error?.message || '保存失败'
     messageType.value = 'err'
@@ -207,13 +214,12 @@ async function applyOverride() {
     busy.value = true
     await api.patch(`/orders/${selectedOrder.value.id}/override_price`, {
       final_price: Number(override_price.value) || 0,
+      reason: priceReason.value,
     })
-    const order_no = selectedOrder.value.order_no || `ORD-${String(selectedOrder.value.id).padStart(4, '0')}`
-    overrides.value.unshift({ id: selectedOrder.value.id, order_no, price: Number(override_price.value) || 0, ts: nowText() })
-    persistOverrides()
     message.value = '已覆盖最终价格'
     messageType.value = 'ok'
     await refresh()
+    await selectOrder(selectedOrder.value)
   } catch (error) {
     message.value = error?.message || '覆盖失败'
     messageType.value = 'err'
@@ -222,33 +228,7 @@ async function applyOverride() {
   }
 }
 
-function storageKey() {
-  return 'tms_billing_overrides'
-}
-
-function persistOverrides() {
-  try {
-    localStorage.setItem(storageKey(), JSON.stringify(overrides.value))
-  } catch {}
-}
-
-function loadOverrides() {
-  try {
-    overrides.value = JSON.parse(localStorage.getItem(storageKey()) || '[]')
-  } catch {
-    overrides.value = []
-  }
-}
-
-function nowText() {
-  const d = new Date()
-  const Y = d.getFullYear()
-  const M = String(d.getMonth() + 1).padStart(2, '0')
-  const D = String(d.getDate()).padStart(2, '0')
-  const h = String(d.getHours()).padStart(2, '0')
-  const m = String(d.getMinutes()).padStart(2, '0')
-  return `${Y}-${M}-${D} ${h}:${m}`
-}
+function dateTime(value) { return value ? new Date(value).toLocaleString() : '-' }
 </script>
 
 <style scoped>
@@ -258,6 +238,7 @@ function nowText() {
 .summary-box { display: grid; gap: 10px; padding: 14px; border-radius: var(--radius); background: var(--surface-subtle); border: 1px solid var(--border); }
 .summary-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .compact-input { width: 140px; }
+.reason-input { resize: vertical; min-height: 64px; }
 
 @media (max-width: 1100px) {
   .billing-layout { grid-template-columns: 1fr; }

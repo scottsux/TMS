@@ -248,7 +248,80 @@ git diff --check
 
 完成后停止，不得把付款接入或发票系统假设为已完成。
 
-## 8. Milestone 5：出库与运输事件
+## 8. Milestone 4.5：模块化单体重构
+
+### 适用时机
+
+Milestone 4 的异常处理和服务端审计核心完成后、Milestone 5 的运输模型开始前执行。当前 `backend/main.py` 已同时包含应用配置、数据库、模型、认证、权限、异常、审计、订单、任务和文件上传逻辑，继续堆叠会增加回归风险。
+
+### 目标
+
+在不改变现有业务规则和外部行为的前提下，把后端从单文件整理为模块化单体。此次重构只改变代码组织，不新增运输功能、不切换数据库、不引入 AI。
+
+### 必须保持不变
+
+- API 路径、HTTP 方法和请求/响应 JSON 结构。
+- 当前订单、包裹、任务、异常和审计状态规则。
+- SQLite 表结构和现有数据兼容性。
+- `backend.main` 的测试导入兼容性，或在同一里程碑内完成等价测试迁移。
+- 前端页面和 `frontend/src/api/client.js` 的调用方式。
+
+### 目标目录
+
+```text
+backend/
+├── main.py                    # 兼容入口；创建 app 或导出兼容对象
+└── app/
+    ├── config.py              # 配置和环境变量
+    ├── db/
+    │   ├── connection.py      # SQLite 连接
+    │   └── schema.py          # 建表、seed、现有迁移
+    ├── core/
+    │   ├── security.py        # 密码、Token、当前用户
+    │   ├── permissions.py     # RBAC
+    │   └── errors.py           # 统一错误辅助函数
+    ├── models/
+    │   └── enums.py           # 状态、角色、异常类型
+    ├── schemas/               # Pydantic 请求/响应模型
+    ├── repositories/          # SQL 查询和持久化
+    ├── services/              # 业务规则和跨表流程
+    └── api/                   # FastAPI 路由
+```
+
+### 小步骤
+
+1. 运行现有后端测试并保存基线结果；如果环境不可用，先报告，不修改业务逻辑。
+2. 记录当前 API、公开函数、模型和数据库表，尤其是 `backend.tests.test_p0_flow` 直接调用的对象。
+3. 抽出配置、数据库连接和 schema 初始化，不改变调用结果。
+4. 抽出枚举和 Pydantic schemas。
+5. 抽出密码、Token、当前用户和权限检查。
+6. 抽出 repository；只移动 SQL，不同时优化 SQL 或改变字段。
+7. 按领域抽出 parcel、order、task、exception、billing/audit services。
+8. 将路由函数变成薄适配层，只负责请求解析、权限依赖、调用 service 和返回响应。
+9. 保留 `backend.main` 的兼容导出，或同步更新测试并保证相同业务覆盖。
+10. 按领域拆分测试，但保留原有核心流程回归测试。
+11. 更新 README、流程文档、Agent 文档和文件路径说明。
+
+### 不做
+
+- 不引入 PostgreSQL、SQLAlchemy、Alembic 或消息队列。
+- 不新增 `shipment`、预测、RAG、Agent 或外部承运商接口。
+- 不修改数据库表结构。
+- 不顺手重写前端或统一格式化整个仓库。
+- 不为了减少 `main.py` 行数而制造没有职责边界的碎片文件。
+
+### 完成条件
+
+- `main.py` 不再承载全部业务实现，只保留入口和必要兼容导出。
+- 所有当前 API 的路径、响应和权限行为保持一致。
+- 现有流程、异常、审计和权限测试通过。
+- 前端构建通过。
+- `git diff --check` 通过。
+- 文档和目录结构反映实际代码。
+
+完成后停止，等待确认后再开始 Milestone 5。
+
+## 9. Milestone 5：出库与运输事件
 
 ### 目标
 

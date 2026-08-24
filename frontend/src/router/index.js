@@ -10,6 +10,7 @@ import Customers from '../views/Customers.vue'
 import CustomerDetail from '../views/CustomerDetail.vue'
 import Parcels from '../views/Parcels.vue'
 import OrderDetail from '../views/OrderDetail.vue'
+import Exceptions from '../views/Exceptions.vue'
 
 const routes = [
   { path: '/login', component: Login, meta: { title: '登录', public: true } },
@@ -19,6 +20,7 @@ const routes = [
   { path: '/upload', component: Upload, meta: { title: '上传', roles: ['customer','staff'] } },
   { path: '/tasks', component: Tasks, meta: { title: '任务', roles: ['staff','operator'] } },
   { path: '/billing', component: Billing, meta: { title: '结算', roles: ['staff'] } },
+  { path: '/exceptions', component: Exceptions, meta: { title: '异常', roles: ['staff','operator','customer'] } },
   { path: '/customers', component: Customers, meta: { title: '客户', roles: ['staff'] } },
   { path: '/customers/:id', component: CustomerDetail, meta: { title: '客户详情', roles: ['staff'] } },
   { path: '/parcels', component: Parcels, meta: { title: '包裹', roles: ['staff','customer','operator'] } },

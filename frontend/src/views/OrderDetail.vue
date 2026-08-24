@@ -86,7 +86,7 @@
           </div>
         </article>
 
-        <article v-if="can('price:update')" class="card section-card">
+        <article v-if="can('weight:update')" class="card section-card">
           <div class="section-head">
             <div>
               <div class="section-title">重量处理</div>
@@ -98,7 +98,7 @@
               <label class="field-label">实际重量(kg)</label>
               <input v-model.number="actualWeightInput" class="input" type="number" min="0" step="0.01" />
               <div class="section-note">当前值 {{ order.actual_weight.toFixed(2) }} kg</div>
-              <button class="btn btn-primary" :disabled="sending || !canSaveActual" @click="saveActualWeight">保存实重</button>
+              <button class="btn btn-primary" :disabled="sending || !canUpdateWeight || !canSaveActual" @click="saveActualWeight">保存实重</button>
             </div>
             <div class="action-box">
               <label class="field-label">体积重量计算</label>
@@ -108,7 +108,7 @@
                 <input v-model.number="hei" class="input" type="number" min="0" step="0.1" placeholder="高(cm)" />
               </div>
               <div class="section-note">公式：长 × 宽 × 高 ÷ 6000，当前 {{ order.volumetric_weight.toFixed(2) }} kg</div>
-              <button class="btn" :disabled="sending || !canCalcVol" @click="calcAndSaveVolWeight">计算并保存</button>
+              <button class="btn" :disabled="sending || !canUpdateWeight || !canCalcVol" @click="calcAndSaveVolWeight">计算并保存</button>
             </div>
           </div>
         </article>
@@ -178,6 +178,12 @@ const canSaveActual = computed(() => {
 })
 
 const canCalcVol = computed(() => Number(len.value) > 0 && Number(wid.value) > 0 && Number(hei.value) > 0)
+
+const canUpdateWeight = computed(() => {
+  if (!order.value || !can('weight:update')) return false
+  if (role.value === 'operator') return order.value.status === 'PACKING'
+  return ['PACKING', 'READY_TO_SHIP'].includes(order.value.status)
+})
 
 onMounted(async () => {
   await refreshOrder()

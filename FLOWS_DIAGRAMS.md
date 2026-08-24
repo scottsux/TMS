@@ -24,8 +24,8 @@ flowchart TD
     E --> F[创建一个打包任务\nTODO]
     F -->|操作员开始任务| G[订单 PACKING\n任务 IN_PROGRESS]
     G -->|操作员完成打包并记录重量| H[包裹 PACKED\n订单 READY_TO_SHIP]
-    H -->|员工确认发货| I[订单 COMPLETED\n任务 DONE]
-    I --> J[记录 shipped_at\n基础计价/人工改价]
+    H -->|无 OPEN 异常时员工确认发货| I[订单 COMPLETED\n任务 DONE]
+    I --> J[员工结算/人工改价\n服务端审计]
 ```
 
 注意：当前发货接口会把订单标记为 `COMPLETED`，包裹状态保持 `PACKED`，只记录 `shipped_at`。这不是完整的运输和签收状态。
@@ -103,14 +103,25 @@ TODO → IN_PROGRESS → DONE
 | `/orders/:id` | 查看订单、记录重量、完成打包、员工发货 |
 | `/tasks` | 查看任务、操作员开始任务 |
 | `/billing` | 计算价格、人工覆盖价格 |
+| `/exceptions` | 登记、查看和解决订单异常 |
 | `/customers` | 员工查看客户 |
 | `/customers/:id` | 员工查看客户关联订单 |
 
-前端按钮和后端权限仍需统一；在权限修复完成前，不应把所有页面按钮都视为可用功能。
+重量、价格、异常和发货均由后端按角色、订单状态和未解决异常进行最终校验。
 
-## 6. 目标扩展流程
+## 6. 当前异常与结算审计
 
-### 6.1 订单和包裹关系
+```text
+客户：取消 / 地址错误 / 价格争议
+员工：全部异常类型，并负责 OPEN -> RESOLVED
+操作员：破损 / 违禁品
+```
+
+`OPEN` 异常不会改变订单状态，但会阻止发货、自动计价和人工改价。操作员只能在 `PACKING` 更新重量；员工可在 `PACKING` 或 `READY_TO_SHIP` 修正重量；`COMPLETED` 后重量不可再改。价格操作仅限员工且仅限 `COMPLETED` 订单。所有异常、重量和价格变更都写入服务端审计记录。
+
+## 7. 目标扩展流程
+
+### 7.1 订单和包裹关系
 
 当前 `orders.parcel_ids` 是 JSON 列表。目标是使用 `order_parcels` 关系表，从而支持：
 
@@ -119,7 +130,7 @@ TODO → IN_PROGRESS → DONE
                          ↘ 释放/重新分配
 ```
 
-### 6.2 出库和运输事件
+### 7.2 出库和运输事件
 
 ```mermaid
 flowchart TD
@@ -135,7 +146,7 @@ flowchart TD
 
 目标新增 `shipments`、`shipment_events`、`exceptions` 等模型后，订单完成和包裹签收才可以被准确区分。
 
-### 6.3 AI 运营助手
+### 7.3 AI 运营助手
 
 ```mermaid
 flowchart LR
@@ -150,7 +161,7 @@ flowchart LR
 
 AI 只负责理解、分类、检索和推荐；订单变更、价格计算、状态流转仍由后端业务服务执行。
 
-## 7. 推荐演进顺序
+## 8. 推荐演进顺序
 
 1. 修复前后端权限和按钮错位。
 2. 补齐价格、重量和权限测试。

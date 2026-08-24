@@ -46,7 +46,8 @@ receipt.
 - **Order consolidation:** use the canonical `order_parcels` relation table to create, add, remove, and release parcel assignments; each parcel can belong to only one order. The legacy `parcel_ids` response field remains synchronized for compatibility.
 - **Warehouse task flow:** create one packing task per order, start packing, record actual weight, and synchronize task/order/parcel states.
 - **Shipping and notifications:** complete shipment for ready-to-ship orders and store customer-oriented notification payloads.
-- **Settlement:** calculate `actual_weight × rate_per_kg + extra_fee` and allow a staff user to override the final price.
+- **Exception handling:** customer, staff, and operator can register their permitted exception types; staff resolves `OPEN` exceptions with a recorded outcome. Open exceptions block shipping and price changes without changing the order state machine.
+- **Settlement and audit:** only staff can price completed orders or override a final price with a reason. Weight and price changes, plus exception actions, are stored with actor, timestamp, before/after values, and reason.
 - **Operations UI:** role-aware dashboard, parcel list, order list/detail, task board, billing view, customer list, and parcel-upload page.
 
 ## Architecture
@@ -72,7 +73,7 @@ customers, users, parcels, orders, order_parcels, tasks, notifications
 
 ## Data model and workflow states
 
-The application initializes the following SQLite tables: `customers`, `users`, `parcels`, `orders`, `tasks`, and `notifications`.
+The application initializes the following SQLite tables: `customers`, `users`, `parcels`, `orders`, `order_parcels`, `tasks`, `notifications`, `order_exceptions`, and `order_audits`.
 
 Current workflow states are intentionally small and explicit:
 
@@ -80,6 +81,12 @@ Current workflow states are intentionally small and explicit:
 Parcel: IN_TRANSIT -> ARRIVED -> PACK_REQUESTED -> PACKED
 Order:  DRAFT -> READY_TO_PACK -> PACKING -> READY_TO_SHIP -> COMPLETED
 Task:   TODO -> IN_PROGRESS -> DONE
+```
+
+Order exceptions use a separate lifecycle and never add an order status:
+
+```text
+OPEN -> RESOLVED
 ```
 
 `SUBMITTED` and `REJECTED` are also present in the parcel enum, but the current parcel-creation endpoint starts directly at `IN_TRANSIT`.
@@ -147,7 +154,7 @@ Open the URL printed by Vite (normally `http://localhost:5173`). Set `VITE_API_B
 
 ## Validation
 
-The repository contains a Python `unittest` suite for the primary backend flow: login, packing request, automatic order creation, task start/completion, shipment, invalid transitions, and customer scoping. Price calculation, manual price override, weight updates, and full role-matrix coverage still need dedicated assertions.
+The repository contains a Python `unittest` suite for workflow, permissions, price/weight constraints, file boundaries, order-parcel relations, exception handling, and server-side audit records.
 
 ```bash
 backend/.venv/bin/python -m unittest -v backend.tests.test_p0_flow
@@ -171,7 +178,7 @@ These limitations are intentional to keep the project honest as an MVP:
 - `order_parcels` is the canonical order-to-parcel relation. The legacy `orders.parcel_ids` JSON column remains synchronized temporarily for API compatibility; it is not the source of truth.
 - The service is a single FastAPI module without Docker, CI/CD, observability, rate limiting, or production secret management.
 - The current frontend permission map and several visible actions need further alignment with the backend permission map before production use.
-- The billing page's price-override history is stored in browser `localStorage`, not as a server-side audit trail.
+- Billing is a completed-order settlement view only; currencies, payment state, invoices, refund processing, and approval workflows are still out of scope.
 
 ## Planned next steps
 

@@ -2,15 +2,20 @@ import { defineStore } from 'pinia'
 import api from '../api/client'
 
 const PERMISSIONS = {
-  customer: new Set(['parcel:create', 'parcel:view', 'order:view', 'notification:create']),
+  customer: new Set([
+    'parcel:create', 'parcel:view', 'order:view', 'notification:create',
+    'exception:create', 'exception:view'
+  ]),
   staff: new Set([
     'parcel:create', 'parcel:view', 'parcel:arrived',
     'order:create', 'order:view', 'order:update', 'order:ship',
-    'task:view', 'customer:view', 'price:update',
+    'task:view', 'customer:view', 'price:update', 'weight:update',
+    'exception:create', 'exception:view', 'exception:resolve', 'audit:view',
     'notification:view', 'notification:clear'
   ]),
   operator: new Set([
-    'parcel:view', 'order:view', 'task:view', 'task:start', 'task:complete', 'notification:view'
+    'parcel:view', 'order:view', 'task:view', 'task:start', 'task:complete', 'notification:view',
+    'weight:update', 'exception:create', 'exception:view'
   ])
 }
 
