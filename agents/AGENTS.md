@@ -25,13 +25,15 @@
 
 当前项目是 MVP/demo 状态：优先保证核心流程可跑，避免过早引入复杂抽象。
 
+实施任务必须先阅读仓库根目录的 `IMPLEMENTATION_PLAN.md`。默认一次只执行一个里程碑；完成验收后停止并报告，不得自动进入下一阶段。
+
 ## 技术栈与入口
 
 后端：
 
 - FastAPI 单文件服务，入口是 `backend/main.py`。
 - 依赖在 `backend/requirements.txt`。
-- 当前使用内存字典作为 demo 数据库，服务重启后数据会丢失。
+- 当前使用 SQLite 作为 MVP 数据库；迁移、生产数据库和完整审计仍属于后续工作。
 - 文件上传 demo 存储目录是 `/tmp/tms_uploads`。
 
 前端：
@@ -60,7 +62,7 @@
 主要状态：
 
 - 包裹：`SUBMITTED`、`IN_TRANSIT`、`ARRIVED`、`PACK_REQUESTED`、`PACKED`、`REJECTED`。
-- 订单：`DRAFT`、`READY_TO_PACK`、`PACKING`、`COMPLETED`。
+- 订单：`DRAFT`、`READY_TO_PACK`、`PACKING`、`READY_TO_SHIP`、`COMPLETED`。
 - 任务：`TODO`、`IN_PROGRESS`、`DONE`。
 
 修改状态相关逻辑时，需要同步检查：
@@ -73,8 +75,8 @@
 ## 通用开发约定
 
 - 保持 MVP 简洁，优先延续现有 FastAPI 单文件和 Vue 页面结构，除非改动已经明显需要拆分。
-- 不要假设数据已持久化；目前后端重启会清空内存数据。
-- 不要把当前 mock 登录当作真实鉴权。涉及安全、角色隔离或后台权限时，需要先设计后端鉴权。
+- 不要把 SQLite MVP 持久化误认为生产级数据库；当前仍缺少迁移、备份和生产配置。
+- 当前登录已包含后端密码校验和签名 Token，但仍是演示级认证，不是生产身份系统。
 - 修改业务流程时，同时检查前后端状态枚举、路由页面、权限判断和 README。
 - 新增接口时，尽量保持请求/响应结构简单，并让前端通过 `frontend/src/api/client.js` 访问。
 - 图片上传当前只是 demo 存储，不包含真实对象存储、鉴权、访问 URL 或清理机制。
@@ -103,15 +105,14 @@
 
 Python 环境：
 
-- 本项目后端固定使用 Conda 环境 `/home/scottsux/miniconda3/envs/python312`。
-- 运行 Python、pip、uvicorn 或测试命令时，优先使用这个解释器，不使用 `backend/.venv`。
+- 优先使用仓库中可用的项目环境 `backend/.venv`；如果不可用，先报告环境问题，不要擅自删除或重建环境。
 
 后端：
 
 ```bash
 cd backend
-/home/scottsux/miniconda3/envs/python312/bin/python -m pip install -r requirements.txt
-/home/scottsux/miniconda3/envs/python312/bin/python -m uvicorn main:app --reload --port 8000
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m uvicorn main:app --reload --port 8000
 ```
 
 前端：
@@ -125,13 +126,13 @@ npm run dev
 前端格式规范文件：
 
 ```bash
-/home/scottsux/TMS/.prettierrc.json
+./.prettierrc.json
 ```
 
 Python / Ruff 规范文件：
 
 ```bash
-/home/scottsux/TMS/pyproject.toml
+./pyproject.toml
 ```
 
 默认前端 API 地址来自 `frontend/src/api/client.js`：

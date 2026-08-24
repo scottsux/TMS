@@ -9,6 +9,7 @@
 - 主要修改 `backend/main.py`。
 - 依赖文件是 `backend/requirements.txt`。
 - 可以参考 `README.md`、`tms.py` 和前端调用方式，但以后端实际行为为准。
+- 开始实施前必须阅读仓库根目录的 `IMPLEMENTATION_PLAN.md`，一次只执行一个里程碑。
 - 必须遵守仓库根目录的 `.editorconfig`、`.gitattributes`、`pyproject.toml`。
 
 ## 代码风格要求
@@ -31,10 +32,11 @@
 ## 后端开发原则
 
 - 保持 MVP 简洁，优先沿用 FastAPI 单文件结构。
-- 当前是 demo 内存数据模型，不要假设数据库、事务或持久化已存在。
+- 当前使用 SQLite 作为 MVP 数据库，但尚无生产级迁移、备份和部署配置。
+- 当前已经有后端密码校验、签名 Token 和角色权限；不要把它退回 mock 登录，也不要把它描述成生产身份系统。
 - 新接口优先保持请求体、响应体简单直白。
 - 现阶段优先保证核心流程可跑，不提前引入复杂抽象层。
-- 不要把 mock 登录扩展成半成品安全方案；涉及鉴权要先单独设计。
+- 不要绕过后端 RBAC；前端隐藏按钮不能作为安全边界。
 
 ## 状态流转要求
 
@@ -49,7 +51,7 @@
 重点状态：
 
 - 包裹：`SUBMITTED`、`IN_TRANSIT`、`ARRIVED`、`PACK_REQUESTED`、`PACKED`、`REJECTED`
-- 订单：`DRAFT`、`READY_TO_PACK`、`PACKING`、`COMPLETED`
+- 订单：`DRAFT`、`READY_TO_PACK`、`PACKING`、`READY_TO_SHIP`、`COMPLETED`
 - 任务：`TODO`、`IN_PROGRESS`、`DONE`
 
 ## 常用接口约束
@@ -87,19 +89,30 @@
 - 如果新增字段，优先让字段名清晰可读，避免无意义缩写。
 - 如果前端已经依赖某个响应结构，修改前先评估兼容性。
 - 若引入新的查询参数或返回字段，保持和前端使用方式一致，尽量不制造双写逻辑。
+- 修改状态、权限、数据库或 API 时，必须同步检查对应的前端页面、测试、README、流程文档和 TODO。
+- 未完成当前里程碑的验收前停止，不要自动开始订单关系重构、运输模型或 AI。
 
 ## 运行与验证
 
-- 后端固定使用 `/home/scottsux/miniconda3/envs/python312/bin/python`。
+- 优先使用仓库中可用的 `backend/.venv`；如果环境不可用，先报告，不要擅自删除或重建环境。
 - 常用启动方式：
 
 ```bash
-cd /home/scottsux/TMS/backend
-/home/scottsux/miniconda3/envs/python312/bin/python -m uvicorn main:app --reload --port 8000
+cd /home/scottsux/projects/TMS/backend
+.venv/bin/python -m uvicorn main:app --reload --port 8000
+```
+
+核心测试：
+
+```bash
+cd /home/scottsux/projects/TMS
+backend/.venv/bin/python -m unittest -v backend.tests.test_p0_flow
 ```
 
 ## 已知风险
 
-- 没有真实数据库。
-- 没有真实用户模型、密码校验、JWT 校验和服务端权限控制。
-- 测试覆盖薄弱，改动核心流程时要主动做最小可用验证。
+- SQLite 仍是 MVP 数据层，没有迁移、备份、连接池和生产数据库配置。
+- 文件上传仍是 `/tmp` demo 存储，没有文件元数据、访问 URL 和清理策略。
+- 前后端权限矩阵存在待修复的操作入口错位。
+- 订单包裹关系仍存为 JSON，结算改价历史仍依赖前端 `localStorage`。
+- 测试尚未完整覆盖价格、人工改价、重量和完整权限矩阵。

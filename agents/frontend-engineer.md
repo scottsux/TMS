@@ -10,6 +10,8 @@
 - 路由在 `frontend/src/router/index.js`。
 - API 访问统一走 `frontend/src/api/client.js`。
 - 权限展示逻辑主要参考 `frontend/src/stores/auth.js`。
+- 开始实施前必须阅读仓库根目录的 `IMPLEMENTATION_PLAN.md`，一次只执行一个里程碑。
+- 后端权限是最终安全边界；前端 permission map 和按钮显示必须与 `backend/main.py` 保持一致。
 - 必须遵守仓库根目录的 `.editorconfig`、`.gitattributes`、`.prettierrc.json`。
 
 ## 代码风格要求
@@ -151,6 +153,9 @@
 - 不要扩大乱码范围，统一使用 UTF-8。
 - 不要改 `node_modules`、`dist` 或其他生成物。
 - 不要脱离现有 Vue 3 + Pinia + Vue Router 结构另起一套设计系统。
+- 不要把规划中的运输、付款、异常、AI Agent 或预测页面当作当前功能直接加入导航。
+- 修改按钮、状态、筛选或路由时，必须同步检查后端 API 权限、`frontend/src/constants/enums.js`、流程文档和 README。
+- 当前订单列表和订单详情存在已知权限错位；先按实施计划修复，不要用前端隐藏按钮掩盖 403。
 
 ## 验证方式
 
@@ -162,7 +167,9 @@
 常用命令：
 
 ```bash
-cd /home/scottsux/TMS/frontend
+cd /home/scottsux/projects/TMS/frontend
 npm run dev
 npm run build
 ```
+
+当前仓库的实际路径以调用 Agent 的工作区为准；不要假设 `/home/scottsux/TMS` 一定存在。完成一个里程碑后必须停止并报告修改文件、构建结果和未验证项目。
