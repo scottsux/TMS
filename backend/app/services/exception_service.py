@@ -1,13 +1,14 @@
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, File, HTTPException, Query, UploadFile
+from fastapi import HTTPException
 
 from .. import config
-from ..core.permissions import ensure_customer_scope, require_permission
+from ..core.permissions import ensure_customer_scope
 from ..core.security import create_token, utc_now, utc_now_iso, verify_password
 from ..db.connection import get_conn
 from ..models.enums import ExceptionStatus, OrderStatus, ParcelStatus, TaskStatus, UserRole
+from ..repositories import audit_repository, exception_repository
 from ..repositories.common import *  # noqa: F403
 from ..schemas import *  # noqa: F403
 from .order_rules import ensure_no_open_exceptions, ensure_weight_update_allowed, exception_types_for_role, price_formula, record_order_audit
@@ -15,7 +16,7 @@ from .order_rules import ensure_no_open_exceptions, ensure_weight_update_allowed
 def create_order_exception(
     oid: int,
     body: OrderExceptionCreate,
-    user: sqlite3.Row = Depends(require_permission("exception:create")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
@@ -24,14 +25,14 @@ def create_order_exception(
         role = UserRole(user["role"])
         if body.type not in exception_types_for_role(role):
             raise HTTPException(status_code=403, detail="exception type is not allowed for this role")
-        cursor = conn.execute(
-            """
-            INSERT INTO order_exceptions (order_id, type, status, reason, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (oid, body.type.value, ExceptionStatus.OPEN.value, body.reason.strip(), user["id"], utc_now_iso()),
+        exception_id = exception_repository.insert_exception(
+            conn,
+            oid,
+            body.type.value,
+            body.reason.strip(),
+            user["id"],
+            utc_now_iso(),
         )
-        exception_id = cursor.lastrowid
         record_order_audit(
             conn,
             oid,
@@ -49,52 +50,28 @@ def create_order_exception(
 
 def list_order_exceptions(
     oid: int,
-    user: sqlite3.Row = Depends(require_permission("exception:view")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
         order = get_order_or_404(conn, oid)
         ensure_customer_scope(user, order["customer_id"])
-        rows = conn.execute(
-            """
-            SELECT e.*, creator.email AS created_by_email, resolver.email AS resolved_by_email
-            FROM order_exceptions e
-            JOIN users creator ON creator.id = e.created_by
-            LEFT JOIN users resolver ON resolver.id = e.resolved_by
-            WHERE e.order_id = ?
-            ORDER BY e.id DESC
-            """,
-            (oid,),
-        ).fetchall()
+        rows = exception_repository.list_for_order(conn, oid)
         return [dict(row) for row in rows]
     finally:
         conn.close()
 
 
 def list_exceptions(
+    user: sqlite3.Row,
     status: Optional[ExceptionStatus] = None,
-    user: sqlite3.Row = Depends(require_permission("exception:view")),
 ):
     conn = get_conn()
     try:
-        sql = """
-            SELECT e.*, o.customer_id, o.order_no, creator.email AS created_by_email,
-                   resolver.email AS resolved_by_email
-            FROM order_exceptions e
-            JOIN orders o ON o.id = e.order_id
-            JOIN users creator ON creator.id = e.created_by
-            LEFT JOIN users resolver ON resolver.id = e.resolved_by
-            WHERE 1 = 1
-        """
-        params: list[Any] = []
+        effective_customer_id = None
         if user["role"] == UserRole.customer.value:
-            sql += " AND o.customer_id = ?"
-            params.append(user["customer_id"])
-        if status is not None:
-            sql += " AND e.status = ?"
-            params.append(status.value)
-        sql += " ORDER BY CASE e.status WHEN 'OPEN' THEN 0 ELSE 1 END, e.id DESC"
-        rows = conn.execute(sql, params).fetchall()
+            effective_customer_id = user["customer_id"]
+        rows = exception_repository.list_all(conn, effective_customer_id, status)
         return [dict(row) for row in rows]
     finally:
         conn.close()
@@ -103,23 +80,22 @@ def list_exceptions(
 def resolve_order_exception(
     eid: int,
     body: OrderExceptionResolve,
-    user: sqlite3.Row = Depends(require_permission("exception:resolve")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
-        exception = conn.execute("SELECT * FROM order_exceptions WHERE id = ?", (eid,)).fetchone()
+        exception = exception_repository.get_by_id(conn, eid)
         if not exception:
             raise HTTPException(status_code=404, detail="order exception not found")
         if exception["status"] != ExceptionStatus.OPEN.value:
             raise HTTPException(status_code=400, detail="exception is already resolved")
         resolved_at = utc_now_iso()
-        conn.execute(
-            """
-            UPDATE order_exceptions
-            SET status = ?, resolved_by = ?, resolution_note = ?, resolved_at = ?
-            WHERE id = ?
-            """,
-            (ExceptionStatus.RESOLVED.value, user["id"], body.resolution_note.strip(), resolved_at, eid),
+        exception_repository.resolve(
+            conn,
+            eid,
+            user["id"],
+            body.resolution_note.strip(),
+            resolved_at,
         )
         record_order_audit(
             conn,
@@ -139,22 +115,13 @@ def resolve_order_exception(
 
 def list_order_audits(
     oid: int,
-    user: sqlite3.Row = Depends(require_permission("audit:view")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
         order = get_order_or_404(conn, oid)
         ensure_customer_scope(user, order["customer_id"])
-        rows = conn.execute(
-            """
-            SELECT a.*, u.email AS actor_email
-            FROM order_audits a
-            JOIN users u ON u.id = a.actor_id
-            WHERE a.order_id = ?
-            ORDER BY a.id DESC
-            """,
-            (oid,),
-        ).fetchall()
+        rows = audit_repository.list_for_order(conn, oid)
         items = []
         for row in rows:
             item = dict(row)
@@ -164,4 +131,3 @@ def list_order_audits(
         return items
     finally:
         conn.close()
-

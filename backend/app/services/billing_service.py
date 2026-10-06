@@ -1,13 +1,14 @@
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, File, HTTPException, Query, UploadFile
+from fastapi import HTTPException
 
 from .. import config
-from ..core.permissions import ensure_customer_scope, require_permission
+from ..core.permissions import ensure_customer_scope
 from ..core.security import create_token, utc_now, utc_now_iso, verify_password
 from ..db.connection import get_conn
 from ..models.enums import ExceptionStatus, OrderStatus, ParcelStatus, TaskStatus, UserRole
+from ..repositories import billing_repository
 from ..repositories.common import *  # noqa: F403
 from ..schemas import *  # noqa: F403
 from .order_rules import ensure_no_open_exceptions, ensure_weight_update_allowed, exception_types_for_role, price_formula, record_order_audit
@@ -15,7 +16,7 @@ from .order_rules import ensure_no_open_exceptions, ensure_weight_update_allowed
 def patch_order_price(
     oid: int,
     body: PricePatch,
-    user: sqlite3.Row = Depends(require_permission("price:update")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
@@ -35,10 +36,7 @@ def patch_order_price(
             "extra_fee": float(body.extra_fee),
             "final_price": final_price,
         }
-        conn.execute(
-            "UPDATE orders SET final_price = ? WHERE id = ?",
-            (final_price, oid),
-        )
+        billing_repository.update_final_price(conn, oid, final_price)
         record_order_audit(
             conn,
             oid,
@@ -57,7 +55,7 @@ def patch_order_price(
 def patch_order_volumetric(
     oid: int,
     body: VolumetricPatch,
-    user: sqlite3.Row = Depends(require_permission("weight:update")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
@@ -66,10 +64,7 @@ def patch_order_volumetric(
         ensure_weight_update_allowed(row, user)
         forwarding = decode_json(row["forwarding"]) or {}
         forwarding["volumetric_weight"] = float(body.volumetric_weight)
-        conn.execute(
-            "UPDATE orders SET volumetric_weight = ?, forwarding = ? WHERE id = ?",
-            (float(body.volumetric_weight), encode_json(forwarding), oid),
-        )
+        billing_repository.update_volumetric_weight(conn, oid, float(body.volumetric_weight), forwarding)
         record_order_audit(
             conn,
             oid,
@@ -87,7 +82,7 @@ def patch_order_volumetric(
 def patch_order_actual_weight(
     oid: int,
     body: ActualWeightPatch,
-    user: sqlite3.Row = Depends(require_permission("weight:update")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
@@ -96,10 +91,7 @@ def patch_order_actual_weight(
         ensure_weight_update_allowed(row, user)
         forwarding = decode_json(row["forwarding"]) or {}
         forwarding["actual_weight"] = float(body.actual_weight)
-        conn.execute(
-            "UPDATE orders SET actual_weight = ?, forwarding = ? WHERE id = ?",
-            (float(body.actual_weight), encode_json(forwarding), oid),
-        )
+        billing_repository.update_actual_weight(conn, oid, float(body.actual_weight), forwarding)
         record_order_audit(
             conn,
             oid,
@@ -117,7 +109,7 @@ def patch_order_actual_weight(
 def override_price(
     oid: int,
     body: OverridePrice,
-    user: sqlite3.Row = Depends(require_permission("price:update")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
@@ -127,7 +119,7 @@ def override_price(
             raise HTTPException(status_code=400, detail="only completed orders can be repriced")
         ensure_no_open_exceptions(conn, oid)
         value = round(float(body.final_price), 2)
-        conn.execute("UPDATE orders SET final_price = ? WHERE id = ?", (value, oid))
+        billing_repository.update_final_price(conn, oid, value)
         record_order_audit(
             conn,
             oid,
@@ -141,4 +133,3 @@ def override_price(
         return {"final_price": value}
     finally:
         conn.close()
-

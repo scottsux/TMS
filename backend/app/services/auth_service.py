@@ -1,13 +1,14 @@
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, File, HTTPException, Query, UploadFile
+from fastapi import HTTPException
 
 from .. import config
-from ..core.permissions import ensure_customer_scope, require_permission
+from ..core.permissions import ensure_customer_scope
 from ..core.security import create_token, utc_now, utc_now_iso, verify_password
 from ..db.connection import get_conn
 from ..models.enums import ExceptionStatus, OrderStatus, ParcelStatus, TaskStatus, UserRole
+from ..repositories.auth_repository import get_user_by_email
 from ..repositories.common import *  # noqa: F403
 from ..schemas import *  # noqa: F403
 from .order_rules import ensure_no_open_exceptions, ensure_weight_update_allowed, exception_types_for_role, price_formula, record_order_audit
@@ -15,15 +16,7 @@ from .order_rules import ensure_no_open_exceptions, ensure_weight_update_allowed
 def login(req: LoginReq):
     conn = get_conn()
     try:
-        row = conn.execute(
-            """
-            SELECT u.id, u.email, u.password_hash, u.role, u.customer_id, c.name AS customer_name
-            FROM users u
-            LEFT JOIN customers c ON c.id = u.customer_id
-            WHERE lower(u.email) = lower(?)
-            """,
-            (req.email.strip(),),
-        ).fetchone()
+        row = get_user_by_email(conn, req.email.strip())
     finally:
         conn.close()
     if not row or not verify_password(req.password, row["password_hash"]):
@@ -38,4 +31,3 @@ def login(req: LoginReq):
             "name": row["customer_name"] or row["email"],
         },
     )
-

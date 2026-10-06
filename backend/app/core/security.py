@@ -11,6 +11,7 @@ from fastapi import Header, HTTPException
 
 from .. import config
 from ..db.connection import get_conn
+from ..repositories.auth_repository import get_user_by_id
 
 
 def utc_now() -> datetime:
@@ -77,12 +78,7 @@ def get_current_user(authorization: Optional[str] = Header(default=None)) -> sql
     payload = parse_token(authorization.split(" ", 1)[1].strip())
     conn = get_conn()
     try:
-        row = conn.execute(
-            """
-            SELECT u.id, u.email, u.role, u.customer_id, c.name AS customer_name
-            FROM users u LEFT JOIN customers c ON c.id = u.customer_id WHERE u.id = ?
-            """, (payload["sub"],)
-        ).fetchone()
+        row = get_user_by_id(conn, payload["sub"])
     finally:
         conn.close()
     if not row:

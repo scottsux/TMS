@@ -1,33 +1,25 @@
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-from fastapi import Depends, File, HTTPException, Query, UploadFile
+from fastapi import HTTPException
 
 from .. import config
-from ..core.permissions import ensure_customer_scope, require_permission
+from ..core.permissions import ensure_customer_scope
 from ..core.security import create_token, utc_now, utc_now_iso, verify_password
 from ..db.connection import get_conn
 from ..models.enums import ExceptionStatus, OrderStatus, ParcelStatus, TaskStatus, UserRole
+from ..repositories import notification_repository, order_repository, parcel_repository
 from ..repositories.common import *  # noqa: F403
 from ..schemas import *  # noqa: F403
 from .order_rules import ensure_no_open_exceptions, ensure_weight_update_allowed, exception_types_for_role, price_formula, record_order_audit
 
 def upsert_notification(conn: sqlite3.Connection, type_: str, customer_id: int, payload: Dict[str, Any]):
-    conn.execute(
-        """
-        INSERT INTO notifications (type, customer_id, payload, created_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(type, customer_id) DO UPDATE SET
-            payload = excluded.payload,
-            created_at = excluded.created_at
-        """,
-        (type_, customer_id, encode_json(payload), utc_now_iso()),
-    )
+    notification_repository.upsert(conn, type_, customer_id, payload)
 
 
 def notify_ready(
     body: ReadyNotify,
-    user: sqlite3.Row = Depends(require_permission("notification:view")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
@@ -41,7 +33,7 @@ def notify_ready(
 
 def notify_shipped(
     body: ReadyNotify,
-    user: sqlite3.Row = Depends(require_permission("order:ship")),
+    user: sqlite3.Row,
 ):
     conn = get_conn()
     try:
@@ -55,7 +47,7 @@ def notify_shipped(
 
 def notify_ready_to_pack(
     body: ReadyNotify,
-    user: sqlite3.Row = Depends(require_permission("notification:create")),
+    user: sqlite3.Row,
 ):
     ensure_customer_scope(user, body.customer_id)
     conn = get_conn()
@@ -85,53 +77,34 @@ def notify_ready_to_pack(
 
         if body.parcel_ids:
             ids = set(body.parcel_ids)
-            rows = conn.execute(
-                """
-                SELECT p.*
-                FROM parcels p
-                WHERE p.customer_id = ? AND p.status = ?
-                """,
-                (body.customer_id, ParcelStatus.ARRIVED.value),
-            ).fetchall()
-            selectable = [row for row in rows if row["id"] in ids and not is_parcel_assigned(conn, row["id"])]
+            selectable = parcel_repository.list_available_arrived(conn, body.customer_id, ids)
         else:
-            rows = conn.execute(
-                "SELECT * FROM parcels WHERE customer_id = ? AND status = ?",
-                (body.customer_id, ParcelStatus.ARRIVED.value),
-            ).fetchall()
-            selectable = [row for row in rows if not is_parcel_assigned(conn, row["id"])]
+            selectable = parcel_repository.list_available_arrived(conn, body.customer_id)
 
         created_order_id = None
-        draft = conn.execute(
-            "SELECT * FROM orders WHERE customer_id = ? AND status = ? ORDER BY id LIMIT 1",
-            (body.customer_id, OrderStatus.DRAFT.value),
-        ).fetchone()
+        draft = order_repository.get_draft_order(conn, body.customer_id)
 
         now_iso = utc_now_iso()
         if draft is not None:
-            current_ids = set(get_order_parcel_ids(conn, draft["id"]))
+            current_ids = set(order_repository.get_order_parcel_ids(conn, draft["id"]))
             add_ids = [row["id"] for row in selectable if row["id"] not in current_ids]
             validate_order_parcels(conn, body.customer_id, add_ids, exclude_order_id=draft["id"])
-            add_order_parcels(conn, draft["id"], add_ids)
-            sync_legacy_order_parcel_ids(conn, draft["id"])
-            conn.execute(
-                "UPDATE orders SET status = ?, forwarding = ? WHERE id = ?",
-                (
-                    OrderStatus.READY_TO_PACK.value,
-                    encode_json(
-                        {
-                            "channel": body.channel,
-                            "destination": body.destination,
-                            "service": body.service,
-                            "consignee": payload["consignee"],
-                        }
-                    ),
-                    draft["id"],
-                ),
+            order_repository.add_order_parcels(conn, draft["id"], add_ids, now_iso)
+            order_repository.sync_legacy_parcel_ids(conn, draft["id"])
+            order_repository.update_status_and_forwarding(
+                conn,
+                draft["id"],
+                OrderStatus.READY_TO_PACK,
+                {
+                    "channel": body.channel,
+                    "destination": body.destination,
+                    "service": body.service,
+                    "consignee": payload["consignee"],
+                },
             )
             created_order_id = draft["id"]
         elif selectable:
-            order = create_order_record(
+            order = order_repository.create_order_record(
                 conn,
                 body.customer_id,
                 [row["id"] for row in selectable],
@@ -148,10 +121,7 @@ def notify_ready_to_pack(
             created_order_id = order.id
 
         for row in selectable:
-            conn.execute(
-                "UPDATE parcels SET status = ?, pack_requested_at = ? WHERE id = ?",
-                (ParcelStatus.PACK_REQUESTED.value, now_iso, row["id"]),
-            )
+            parcel_repository.mark_pack_requested(conn, row["id"], now_iso)
         conn.commit()
         return {"ok": True, "order_id": created_order_id}
     finally:
@@ -159,25 +129,19 @@ def notify_ready_to_pack(
 
 
 def get_notifications(
+    user: sqlite3.Row,
     type: Optional[str] = None,
     customer_id: Optional[int] = None,
-    user: sqlite3.Row = Depends(require_permission("notification:view")),
 ):
     conn = get_conn()
     try:
         effective_customer_id = customer_id
         if user["role"] == UserRole.customer.value:
             effective_customer_id = user["customer_id"]
-        sql = "SELECT * FROM notifications WHERE 1 = 1"
-        params: list[Any] = []
         if type:
-            sql += " AND type = ?"
-            params.append(type)
-        if effective_customer_id is not None:
-            sql += " AND customer_id = ?"
-            params.append(effective_customer_id)
-        sql += " ORDER BY created_at DESC"
-        rows = conn.execute(sql, params).fetchall()
+            rows = notification_repository.list_notifications(conn, type, effective_customer_id)
+        else:
+            rows = notification_repository.list_notifications(conn, None, effective_customer_id)
         items = [decode_json(row["payload"]) for row in rows]
         if type:
             return items
@@ -190,17 +154,13 @@ def get_notifications(
 
 
 def clear_notifications(
+    user: sqlite3.Row,
     type: Optional[str] = None,
-    user: sqlite3.Row = Depends(require_permission("notification:clear")),
 ):
     conn = get_conn()
     try:
-        if type:
-            conn.execute("DELETE FROM notifications WHERE type = ?", (type,))
-        else:
-            conn.execute("DELETE FROM notifications")
+        notification_repository.delete_notifications(conn, type)
         conn.commit()
         return {"ok": True}
     finally:
         conn.close()
-

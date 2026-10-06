@@ -1,11 +1,10 @@
-import json
 import sqlite3
 from typing import Any, Optional
 
 from fastapi import HTTPException
 
-from ..core.security import utc_now_iso
-from ..models.enums import ExceptionStatus, ExceptionType, OrderStatus, UserRole
+from ..models.enums import ExceptionType, OrderStatus, UserRole
+from ..repositories import audit_repository, exception_repository
 
 
 def price_formula(actual_weight: float, rate_per_kg: float, extra_fee: float) -> float:
@@ -22,30 +21,20 @@ def record_order_audit(
     reason: Optional[str] = None,
     exception_id: Optional[int] = None,
 ) -> None:
-    conn.execute(
-        """
-        INSERT INTO order_audits (
-            order_id, exception_id, action, actor_id, created_at, before_value, after_value, reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            order_id,
-            exception_id,
-            action,
-            actor_id,
-            utc_now_iso(),
-            json.dumps(before_value, ensure_ascii=False) if before_value is not None else None,
-            json.dumps(after_value, ensure_ascii=False) if after_value is not None else None,
-            reason,
-        ),
+    audit_repository.record(
+        conn,
+        order_id,
+        action,
+        actor_id,
+        before_value,
+        after_value,
+        reason,
+        exception_id,
     )
 
 
 def ensure_no_open_exceptions(conn: sqlite3.Connection, order_id: int) -> None:
-    if conn.execute(
-        "SELECT 1 FROM order_exceptions WHERE order_id = ? AND status = ?",
-        (order_id, ExceptionStatus.OPEN.value),
-    ).fetchone():
+    if exception_repository.has_open(conn, order_id):
         raise HTTPException(status_code=400, detail="order has unresolved exceptions")
 
 
