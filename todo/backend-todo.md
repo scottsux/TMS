@@ -11,10 +11,10 @@
   - 已为员工补齐 `task:view`，仪表盘仅在有权限时请求 `/tasks`。
   - 已补充各角色的接口级 401/403 覆盖；关键前端操作已按权限映射收敛。
 
-- [ ] 建立可重复的本地开发与验证环境
-  - 确认项目使用的 Python 环境可安装并运行 `backend/requirements.txt`。
-  - 确认 WSL 中有可用的 Linux Node.js/npm，避免前端构建调用 Windows npm shim。
-  - 让 README、`MANUAL_TEST_PLAN.md` 和实际环境路径保持一致。
+- [x] 建立可重复的本地开发与验证环境
+  - 使用 `backend/.venv` 运行后端测试和 Uvicorn。
+  - WSL 使用用户级 nvm 提供 Linux Node.js/npm；构建前执行 `source ~/.nvm/nvm.sh` 和 `nvm use --lts`，避免调用 Windows npm shim。
+  - README、`MANUAL_TEST_PLAN.md`、`agents/AGENTS.md` 与实际启动/验证命令已同步。
 
 ### P1 - 核心业务模型缺口
 
@@ -45,10 +45,11 @@
 
 - [x] Milestone 4.5：模块化单体重构
   - 已将 `backend/main.py` 收敛为兼容入口，保持既有 FastAPI app 与测试直接调用对象可导入。
-  - 已抽取配置、SQLite 连接与 schema bootstrap、按领域拆分的 Pydantic schema、Token/当前用户/RBAC、共享 SQL repository，以及订单、包裹、任务、异常、结算和通知 service。
-  - `api/routes.py` 只负责应用装配和原有 HTTP 合同注册；业务实现不再集中在路由文件。
+  - 4.5A：已建立领域 FastAPI Router，Router 负责 HTTP 参数、依赖、RBAC 和响应适配，Service 负责业务流程。
+  - 4.5B：已按领域拆分 auth、customer、parcel、order、task、exception、billing、notification、audit Repository；Service 不再直接执行领域 SQL。
+  - 4.5C：已统一根目录启动命令，确认 WSL/Linux Node/npm 验证方式，并同步 README、实施计划、手动测试计划和 Agent 约束。
   - API 路径、SQLite 表结构、状态规则和前端调用方式均未改动；未引入 PostgreSQL、ORM、Alembic、消息队列、运输模型或 AI。
-  - 已运行现有流程、异常、审计、权限测试和前端构建；后续仅在新业务变更时继续按领域拆分 repository 与 route handler。
+  - 已通过后端 unittest、`python -m compileall`、Linux Node 下的 `npm run build` 和 `git diff --check`；Milestone 4.5 完整验收完成。
 
 ### P2 - 运营功能和生产化
 
@@ -165,28 +166,27 @@
   - [x] 文件上传测试：类型、大小、数量限制。
   - [ ] 前端关键流程验证：登录、提交包裹、申请打包、完成任务、结算。
 
-- [ ] 拆分后端结构
-  - 在数据库和权限稳定后，再考虑从单文件 `backend/main.py` 拆分。
-  - 建议拆为 models、schemas、routes、services、database 等模块。
-  - 拆分时保持 API 行为不变。
+- [x] 拆分后端结构
+  - 已在 Milestone 4.5 完成模块化单体拆分，当前边界为 API Router -> Service -> Domain Repository -> SQLite。
+  - `backend/main.py` 仅保留兼容入口和导出，API、业务规则、领域 SQL 已分别归位。
+  - API 行为保持兼容，后续只在新增业务领域时按现有边界扩展。
 
 - [ ] 优化前端工程结构
   - 提取常用状态标签、表格、表单和确认弹窗组件。
   - 为 API 调用增加统一错误提示和 loading 状态。
   - 梳理移动端布局和长文本显示。
 
-- [ ] 更新项目文档
-  - 保持 `README.md`、`AGENTS.md` 和实际代码一致。
-  - 为新增数据库、认证、部署方式补充说明。
-  - 记录关键业务决策，避免状态流转再次分叉。
+- [x] 更新项目文档
+  - 已同步 `README.md`、`IMPLEMENTATION_PLAN.md`、`MANUAL_TEST_PLAN.md`、`agents/AGENTS.md` 和本 TODO 的实际模块边界与启动命令。
+  - 已记录 Python、Linux Node/npm、后端测试和前端构建的验证方式。
+  - 已保留未实现的 Shipment、Route、Quote、AI 和 Agent 为后续规划，没有写成已完成功能。
 
 ## 建议推进顺序
 
 1. 修复前后端权限错位。
-2. 建立可重复的本地开发与验证环境。
+2. 建立可重复的本地开发与验证环境（已完成）。
 3. 补齐权限、价格和重量相关测试。
 4. 规范 `order_parcels` 订单-包裹关系。
-5. 增加订单异常状态和真实运输事件模型。
-6. 完善结算审计、任务分配和仓库异常记录。
-7. 再实现第一个可测量的 AI 功能。
-8. 最后考虑后端拆分和更完整的生产化能力。
+5. 完善订单异常、结算审计和仓库作业能力。
+6. Milestone 4.5 模块化单体重构与最终验收（已完成）。
+7. 由用户单独确认后，再开始真实运输事件或其他后续里程碑。

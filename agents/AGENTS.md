@@ -32,6 +32,8 @@
 后端：
 
 - FastAPI 模块化单体服务，兼容入口是 `backend/main.py`；应用模块位于 `backend/app/`。
+- 推荐从仓库根目录使用 `backend.main:app` 启动；`backend/app/api/routes.py` 负责 app 装配，领域路由、Service 和 Repository 分层位于 `backend/app/` 下。
+- 调用边界固定为 `API Router -> Service -> Domain Repository -> SQLite`。Service 可以管理跨 Repository 事务，但不直接执行领域 SQL。
 - 依赖在 `backend/requirements.txt`。
 - 当前使用 SQLite 作为 MVP 数据库；迁移、生产数据库和完整审计仍属于后续工作。
 - 文件上传 demo 存储目录是 `/tmp/tms_uploads`。
@@ -110,14 +112,15 @@ Python 环境：
 后端：
 
 ```bash
-cd backend
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m uvicorn main:app --reload --port 8000
+backend/.venv/bin/python -m pip install -r backend/requirements.txt
+backend/.venv/bin/python -m uvicorn backend.main:app --reload --port 8000
 ```
 
 前端：
 
 ```bash
+source ~/.nvm/nvm.sh
+nvm use --lts
 cd frontend
 npm install
 npm run dev

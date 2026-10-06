@@ -60,6 +60,8 @@ backend/.venv/bin/python -m unittest -v backend.tests.test_p0_flow
 前端环境可用时：
 
 ```bash
+source ~/.nvm/nvm.sh
+nvm use --lts
 cd frontend
 npm run build
 ```
@@ -250,6 +252,20 @@ git diff --check
 
 ## 8. Milestone 4.5：模块化单体重构
 
+### 当前状态
+
+**COMPLETE（最终验收：2026-10-06）**。4.5A 已完成 API Router 与 Service
+分离，4.5B 已完成领域 SQL 向 Repository 下沉，4.5C 已完成启动方式、Linux
+Node/npm 验证环境和文档同步。当前实际边界为：
+
+```text
+FastAPI Router -> Service -> Domain Repository -> SQLite
+```
+
+后端测试、`compileall`、前端 production build 和 `git diff --check` 均已通过。
+本里程碑没有新增 Shipment、Route、Quote、AI 或 Agent 功能；下一阶段仍需单独
+确认后才能开始。
+
 ### 适用时机
 
 Milestone 4 的异常处理和服务端审计核心完成后、Milestone 5 的运输模型开始前执行。当前 `backend/main.py` 已同时包含应用配置、数据库、模型、认证、权限、异常、审计、订单、任务和文件上传逻辑，继续堆叠会增加回归风险。
@@ -283,7 +299,7 @@ backend/
     ├── models/
     │   └── enums.py           # 状态、角色、异常类型
     ├── schemas/               # Pydantic 请求/响应模型
-    ├── repositories/          # SQL 查询和持久化
+    ├── repositories/          # 按领域组织的 SQL 查询和持久化
     ├── services/              # 业务规则和跨表流程
     └── api/                   # FastAPI 路由
 ```

@@ -71,6 +71,26 @@ customers, users, parcels, orders, order_parcels, tasks, notifications
 - **Data:** SQLite with parameterized SQL via Python's built-in `sqlite3`
 - **Developer tooling:** Ruff configuration, Prettier configuration, EditorConfig, Git
 
+### Backend module boundaries
+
+The backend is a modular monolith with an intentionally small layering boundary:
+
+```text
+FastAPI Router
+      ↓ HTTP parsing, Depends, RBAC, response mapping
+Service
+      ↓ business rules, state transitions, cross-domain workflows, transaction boundary
+Domain Repository
+      ↓ SQL and persistence mapping
+SQLite
+```
+
+`backend/main.py` is only the compatibility entry point and app export. The actual
+app assembly is in `backend/app/api/routes.py`; domain routers live under
+`backend/app/api/`, business workflows under `backend/app/services/`, and SQL under
+`backend/app/repositories/`. Services may use `get_conn()` to keep a multi-repository
+workflow in one SQLite transaction, but do not execute domain SQL directly.
+
 ## Data model and workflow states
 
 The application initializes the following SQLite tables: `customers`, `users`, `parcels`, `orders`, `order_parcels`, `tasks`, `notifications`, `order_exceptions`, and `order_audits`.
@@ -98,12 +118,12 @@ backend/
   main.py                 # Compatibility entry point and legacy test exports
   app/
     config.py             # SQLite, upload, and token configuration
-    api/                  # Application assembly plus auth/parcel/order/task/etc. route exports
+    api/                  # App assembly plus domain FastAPI routers
     core/                 # Token, current-user, and RBAC helpers
     db/                   # SQLite connection factory and schema bootstrap/seed entry points
     models/enums.py       # Workflow, role, and exception enums
     schemas/              # Auth, parcel, order, task, exception, and common Pydantic schemas
-    repositories/common.py # Existing SQL, row conversion, relation migration, and persistence helpers
+    repositories/         # Domain SQL/persistence repositories; common.py has shared helpers only
     services/             # Auth, parcel, order, task, exception, billing, and notification workflows
   requirements.txt
   tests/test_p0_flow.py   # Core workflow test cases
@@ -126,7 +146,12 @@ MANUAL_TEST_PLAN.md       # Manual verification scenarios
 ### Prerequisites
 
 - Python 3.12 recommended
-- Node.js and npm
+- Linux Node.js and npm (WSL users can use the existing user-level nvm installation):
+
+  ```bash
+  source ~/.nvm/nvm.sh
+  nvm use --lts
+  ```
 
 ### Backend
 
@@ -135,8 +160,7 @@ From the repository root:
 ```bash
 python3 -m venv backend/.venv
 backend/.venv/bin/python -m pip install -r backend/requirements.txt
-cd backend
-.venv/bin/python -m uvicorn main:app --reload --port 8000
+backend/.venv/bin/python -m uvicorn backend.main:app --reload --port 8000
 ```
 
 The API runs at `http://localhost:8000`. FastAPI also exposes interactive API documentation at `http://localhost:8000/docs`.
@@ -154,6 +178,8 @@ The SQLite database is created at `backend/tms.db` when the service starts. Seed
 In another terminal:
 
 ```bash
+source ~/.nvm/nvm.sh
+nvm use --lts
 cd frontend
 npm install
 npm run dev
@@ -172,6 +198,8 @@ backend/.venv/bin/python -m unittest -v backend.tests.test_p0_flow
 The frontend production build can be checked with:
 
 ```bash
+source ~/.nvm/nvm.sh
+nvm use --lts
 cd frontend
 npm run build
 ```
@@ -193,7 +221,7 @@ These limitations are intentional to keep the project honest as an MVP:
 
 The most valuable next improvements are:
 
-1. Establish a repeatable local validation environment.
+1. Keep the documented WSL/Linux Node and project Python commands as the repeatable local validation baseline.
 2. Add shipment metadata, carrier events, cancellation, and delivery confirmation.
 3. Add database migrations when SQLite schema changes require controlled rollout.
 4. Add task assignment, warehouse exception handling, and production file storage.
