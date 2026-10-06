@@ -97,7 +97,7 @@ flowchart TB
 | API 层 | FastAPI 单体接口 | 已有 REST API |
 | 认证 | PBKDF2 + HMAC Token + 后端 RBAC | 已实现基础能力 |
 | 客户/包裹 | `customers`、`parcels` | 已有创建、查询、到仓状态 |
-| 订单 | `orders` | 已有集运订单，但包裹关系仍是 JSON ID 列表 |
+| 订单 | `orders`、`order_parcels` | 已有集运订单；`order_parcels` 是规范化主关系，`parcel_ids` 仅为兼容响应字段 |
 | 仓库 | `tasks` | 已有一订单一打包任务 |
 | 通知 | `notifications` | 已有数据库通知，不是消息队列 |
 | 计价 | Python 价格公式 | 已有基础计算和人工覆盖 |
@@ -189,7 +189,7 @@ consignees
 order_status_history
 ```
 
-解决的问题：当前 `parcel_ids` JSON 不利于拆单、合单、释放和审计。
+当前 `order_parcels` 已解决订单-包裹关系规范化、释放和重复占用约束；拆单、合单仍是后续业务规则，不属于 M5。
 
 ### 5.3 仓库作业
 
@@ -228,11 +228,11 @@ warehouse_exceptions
 ```text
 shipments
 shipment_events
-carriers
-service_routes
 ```
 
-解决的问题：把当前的“发货完成”扩展为真正的出库、运输中、派送和签收状态。
+M5 已确认但尚未实现的最小边界是：一个 Order 对应一个 Shipment，Shipment 独立表达 `READY_FOR_DISPATCH -> DISPATCHED -> IN_TRANSIT -> OUT_FOR_DELIVERY -> DELIVERED`。`Order.COMPLETED` 只表示仓库履约完成且 Shipment 已创建，不表示运输完成或签收；Package 保持仓内状态，仅在 Shipment `DISPATCHED` 时记录 `shipped_at`。
+
+M5 只支持 Tracking 和模拟顺序事件，不包含 `carriers`、`service_routes`、真实承运商接入、多 Shipment 或乱序外部事件处理。Route 和 Restriction 将在 M6 单独建立。
 
 ### 5.5 计价与售后
 
@@ -281,15 +281,15 @@ AI 输出结构化结果：
 
 ### 第二项：物流运营助手
 
-Agent 可以调用的工具：
+未来 Agent 可以调用的工具：
 
 
 - `get_order(order_id)`
 - `list_parcels(customer_id, status)`
-- `get_shipment_events(shipment_id)`
+- `get_shipment_tracking(shipment_id)`
 - `list_pending_tasks()`
 - `create_exception(order_id, type, description)`
-- `calculate_price(weight, route, service)`
+- `calculate_shipping_quote(packages, consolidation_plan, route)`
 
 Agent 不直接改数据库，而是调用带 RBAC、参数校验和审计日志的后端 API。
 
@@ -319,45 +319,21 @@ Pydantic / 业务规则校验
      延误概率 + 主要影响因素 + 运营建议
 ```
 
-## 7. 推荐实施阶段
+## 7. 已确认的后续里程碑路线
 
-### Phase 0：修复当前 MVP
+以下均为计划，未在当前仓库实现：
 
-- 对齐前后端权限。
-- 补齐价格、重量和权限测试。
-- 修正订单列表与详情页的错误操作按钮。
-- 建立可重复的 Python/Node 验证环境。
+1. **M5 Shipment + Tracking**：一订单一 Shipment、模拟运输事件、Tracking 展示；不接真实承运商。
+2. **M6 Route + Restriction + Package Shipping Facts**：路线目录、限制规则、可报价的单包重量/尺寸事实。
+3. **M7 Consolidation Planning + Deterministic Quote**：只读合箱方案、计费重、费用明细、时效与路线比较。
+4. **M8 Safe Action / Tool-ready Contract**：Preview、确认、执行、幂等与动作审计。
+5. **M9 Read-only Logistics Agent**：只读查询包裹、订单、Shipment 和 Tracking。
+6. **M10 Planning Agent**：基于 M6/M7 的确定性结果生成预算、时效和风险建议。
+7. **M11 Human-approved Action Agent**：只生成预览，明确用户确认后才执行。
+8. **M12 Exception Agent**：读取异常/SOP 并生成处置建议，保留人工确认。
+9. **M13 Agent Evaluation**：评估工具调用、安全性、成本和人工接管。
 
-### Phase 1：完成可靠的 TMS 核心
-
-- PostgreSQL + Alembic。
-- `order_parcels` 关系表。
-- 订单取消和异常状态。
-- shipment 与 shipment events。
-- 结算明细和改价审计。
-- 对象存储和文件元数据。
-
-### Phase 2：仓库运营工程化
-
-- 任务分配。
-- 扫码入库和出库。
-- 打包照片与异常上报。
-- RabbitMQ/Celery 异步任务。
-- 运营报表和审计日志。
-
-### Phase 3：加入可验证的 AI
-
-- 异常分类模型或 LLM 分类器。
-- 物流知识库 RAG。
-- 只读运营助手。
-- 受控工具调用和 AI 调用审计。
-
-### Phase 4：预测和优化
-
-- 延误预测。
-- 网点处理能力预测。
-- 取件/运输路线优化。
-- 预测结果与人工反馈闭环。
+此路线不要求 PostgreSQL、Redis、消息队列、微服务、LangGraph 或 MCP 作为 M5–M13 的前置条件。
 
 ## 8. 简历表述边界
 
@@ -365,7 +341,7 @@ Pydantic / 业务规则校验
 
 > Built a full-stack TMS MVP with Vue 3, FastAPI and SQLite, implementing parcel intake, parcel consolidation, warehouse packing tasks, role-based access control, workflow state transitions and weight-based settlement.
 
-### 完成 Phase 1 后可以写
+### 完成 M5 及后续持久化演进后可以写
 
 > Extended the TMS with normalized order–parcel relationships, shipment event tracking, exception workflows, auditable billing records and PostgreSQL-backed persistence.
 

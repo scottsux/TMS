@@ -28,10 +28,14 @@
   - 已提供客户取消、地址错误、破损、违禁品、价格争议五类异常，以及 `OPEN -> RESOLVED` 处理记录。
   - 未解决异常会阻止发货和价格操作，但不改变订单状态机；取消、挂起、退款状态仍属于后续业务规则。
 
-- [ ] 建立真实出库/运输模型
-  - 新增 shipment、shipment_events 或等价模型。
-  - 记录承运商、转运单号、服务类型、起点、目的地、预计送达时间和运输状态。
-  - 将当前“订单完成”与实际出库、运输中、签收状态区分开。
+- [ ] M5：Shipment + Tracking（设计已确认，尚未开始）
+  - `Order` 继续表示集运/仓库履约订单；`Order.COMPLETED` 表示仓库履约完成且已创建对应 Shipment，不表示签收或运输完成。
+  - 新增 `shipments`、`shipment_events` 及对应 Repository、Service、Router、Schema、Tracking 查询和基本前端展示。
+  - MVP 约束一个 Order 对应一个 Shipment；暂不支持多箱、拆单或多 Shipment。
+  - Shipment 状态为 `READY_FOR_DISPATCH -> DISPATCHED -> IN_TRANSIT -> OUT_FOR_DELIVERY -> DELIVERED`。
+  - 创建 Shipment 必须原子校验 `READY_TO_SHIP` 和无 `OPEN` exception，并写入 Shipment、`SHIPMENT_CREATED` event、Order `COMPLETED`、Task `DONE`；此时不写 Package `shipped_at`。
+  - 仅在 Shipment 进入 `DISPATCHED` 时写入 `DISPATCHED` event 和关联 Package `shipped_at`；Package 不增加运输状态。
+  - 仅模拟顺序运输事件；覆盖中转、延误、海关/运输异常，拒绝重复和倒序事件；不接真实承运商或处理乱序外部事件。
 
 - [ ] 完善任务分配和仓库作业
   - 增加任务负责人、优先级、截止时间、开始/完成时间和备注。
@@ -181,12 +185,16 @@
   - 已记录 Python、Linux Node/npm、后端测试和前端构建的验证方式。
   - 已保留未实现的 Shipment、Route、Quote、AI 和 Agent 为后续规划，没有写成已完成功能。
 
-## 建议推进顺序
+## 已确认后续里程碑（均未开始）
 
-1. 修复前后端权限错位。
-2. 建立可重复的本地开发与验证环境（已完成）。
-3. 补齐权限、价格和重量相关测试。
-4. 规范 `order_parcels` 订单-包裹关系。
-5. 完善订单异常、结算审计和仓库作业能力。
-6. Milestone 4.5 模块化单体重构与最终验收（已完成）。
-7. 由用户单独确认后，再开始真实运输事件或其他后续里程碑。
+1. M5：Shipment + Tracking。
+2. M6：Route + Restriction + Package Shipping Facts。
+3. M7：Consolidation Planning + Deterministic Quote。
+4. M8：Safe Action / Tool-ready Contract。
+5. M9：Read-only Logistics Agent。
+6. M10：Planning Agent。
+7. M11：Human-approved Action Agent。
+8. M12：Exception Agent。
+9. M13：Agent Evaluation。
+
+任何里程碑都必须在获得单独确认后才可开始；在 M5 完成并验收前，不得实现 M6 或任何 Agent 能力。

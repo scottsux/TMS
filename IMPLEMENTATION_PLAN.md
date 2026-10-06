@@ -337,104 +337,92 @@ backend/
 
 完成后停止，等待确认后再开始 Milestone 5。
 
-## 9. Milestone 5：出库与运输事件
+## 9. Milestone 5：Shipment + Tracking
 
-### 目标
+### 当前状态
 
-把当前“发货完成”扩展为可追踪的出库和运输事件，但不假设已经接入真实承运商。
+**PLANNED（M5.0 设计已确认，尚未开始实现）**。本里程碑只建立确定性的出库与运输事实层；不实现 Route、Restriction、Quote、AI 或 Agent。
 
-### 小步骤
+### 目标和状态语义
 
-1. 设计 `shipments`：订单、渠道、承运商、转运单号、起点、目的地、运输状态。
-2. 设计 `shipment_events`：事件类型、地点、描述、事件时间、来源。
-3. 将“创建出库单”“出库确认”“运输中”“派送中”“已签收”与订单状态分开。
-4. 增加异常/延误事件记录。
-5. 增加运输详情页面和订单详情入口。
-6. 先使用模拟事件，不调用外部承运商 API。
-7. 为事件顺序和重复事件增加测试。
+- `Order` 继续表示集运/仓库履约订单。
+- `Order.COMPLETED` 固定表示：**仓库履约完成，并已经创建对应 Shipment**。它不表示承运商已签收、运输完成或妥投。
+- Shipment 单独表达运输状态：`READY_FOR_DISPATCH -> DISPATCHED -> IN_TRANSIT -> OUT_FOR_DELIVERY -> DELIVERED`。
+- Package 不增加运输状态，继续表达入仓和打包流程；只有 Shipment 进入 `DISPATCHED` 时，才为关联 Package 写入 `shipped_at`。
+- MVP 固定为一个 Order 对应一个 Shipment，不支持多箱、拆单或多 Shipment。
 
-### 完成条件
+### 必须实现
 
-- 订单完成、出库和签收不再混为一个状态。
-- 运输事件有时间顺序和来源。
-- 模拟运输流程可在前端展示。
+1. 新增 `shipments`、`shipment_events`，以及 Shipment Repository、Service、Router 和 Pydantic Schema；不改变现有模块化单体边界。
+2. Shipment 至少记录订单、承运商、服务、转运单号、起点、目的地、状态、预计送达时间和创建/更新时间；Shipment Event 至少记录类型、地点、描述、发生时间和来源。
+3. 创建 Shipment 必须在一个 Service 事务中完成：
+   - 校验 Order 为 `READY_TO_SHIP`；
+   - 校验不存在 `OPEN` exception；
+   - 创建 Shipment 和 `SHIPMENT_CREATED` event；
+   - Order 转为 `COMPLETED`；
+   - Task 转为 `DONE`；
+   - 不写 Package `shipped_at`。
+4. Shipment 进入 `DISPATCHED` 时，在同一事务中推进 Shipment 状态、写入 `DISPATCHED` event，并为关联 Package 写入 `shipped_at`。
+5. 支持 Tracking 查询、事件列表和仅用于演示的模拟运输事件；事件至少覆盖创建、出库、运输中、中转到达、派送、签收、延误、海关/运输异常。
+6. 为 Shipment 读取和模拟事件写入增加 RBAC、客户数据隔离、状态跳转、事件顺序和重复事件测试。
+7. 增加基本前端 Tracking 展示及订单详情入口。
 
-完成后停止，不得宣称已经接入真实物流承运商。
+### 事件规则
 
-## 9. Milestone 6：仓库任务工程化和文件管理
+- `SHIPMENT_CREATED` 由创建流程写入；`ARRIVED_AT_HUB` 只记录轨迹，不改变 `IN_TRANSIT` 状态。
+- `DELAYED`、`CUSTOMS_HOLD`、`TRANSPORT_EXCEPTION` 在 M5 中作为事件记录，不自动创建新的订单异常或自动处理动作。
+- M5 只接受顺序追加的模拟事件；重复事件和倒序事件必须拒绝，`DELIVERED` 为终态。
+- 真实承运商事件、Webhook、外部事件 ID 和乱序事件重放不属于 M5。
 
-### 目标
+### 不做
 
-让仓库任务可分配、可复核，并让包裹图片成为可管理的业务附件。
-
-### 小步骤
-
-1. 增加任务负责人、优先级、截止时间和备注。
-2. 明确任务领取与员工分配规则。
-3. 增加装箱记录、照片和仓库异常。
-4. 建立文件元数据表。
-5. 清理文件名，防止同名覆盖和路径穿越。
-6. 增加带权限的预览/下载 URL。
-7. 增加删除和清理策略。
-
-### 完成条件
-
-- 操作员可以看到自己的任务。
-- 管理员可以分配和复核任务。
-- 包裹文件可以安全保存、查看和删除。
-- 关键任务和文件操作有测试。
-
-完成后停止，不得为了任务分配直接拆成微服务。
-
-## 10. Milestone 7：第一个可测量的 AI 功能
-
-### 前置条件
-
-只有 Milestone 1–6 的核心业务和测试稳定后，才开始 AI。不得为了简历先接一个没有业务闭环的聊天框。
-
-### 推荐功能
-
-优先实现物流异常分类：
-
-```text
-文本/图片描述 → 分类 → 严重程度 → 是否人工审核 → 创建异常记录
-```
-
-### 小步骤
-
-1. 定义固定异常类别和 JSON 输出格式。
-2. 准备少量人工标注样例，并说明来源和限制。
-3. 使用结构化输出调用模型。
-4. 增加置信度不足时的人工复核兜底。
-5. AI 只能调用创建异常记录等受控工具。
-6. 记录输入、模型、版本、输出、失败原因和人工修正。
-7. 用准确率、召回率、人工复核率和失败率评估。
-8. 在前端增加异常分类结果和人工确认页面。
+- 不实现 Route、Restriction、Quote、Consolidation Planning、Agent 或 Tool Calling。
+- 不接真实承运商，不把模拟事件表述为承运商集成。
+- 不实现多 Shipment、多箱、复杂拆单、真实运输异常自动处置。
+- 不处理乱序真实承运商事件，不引入消息队列、Redis、PostgreSQL 或微服务。
 
 ### 完成条件
 
-- AI 输出可以被后端校验。
-- 低置信度和模型失败不会改变核心订单状态。
-- 有样例集、评估结果和失败案例。
-- 简历只描述实际完成的模型、流程和指标。
+- Order 完成、Shipment 出库和 Shipment 签收有唯一且不冲突的状态归属。
+- 一个 Order 只能创建一个 Shipment；所有创建和状态联动保持原子性。
+- 模拟 Tracking 在前端可查询和展示，事件有时间顺序和来源。
+- 现有流程回归测试及新增 Shipment 测试通过；前端构建、`compileall`、`git diff --check` 通过。
 
-完成后停止。Agent 不得自动继续实现 RAG、Agent、多模型路由或预测模型。
+完成后停止，等待下一里程碑确认。
 
-## 11. Milestone 8：运营助手与预测（后续，不自动开始）
+## 10. Milestone 6：Route + Restriction + Package Shipping Facts
 
-这部分必须单独获得明确指令。
+**PLANNED，尚未开始。** 建立确定性的路线目录、货物/目的地/重量尺寸限制判断，并补齐报价所需的 Package 单包重量、尺寸或体积等 shipping facts 及稳定读取接口。不得实现 Quote、Agent 或真实承运商接入。
 
-候选范围：
+## 11. Milestone 7：Consolidation Planning + Deterministic Quote
 
-- 只读订单/包裹/运输查询助手。
-- 基于物流规则的 RAG 检索。
-- 受 RBAC 控制的工具调用。
-- 基于真实运输事件的延误预测。
-- 预测结果解释和人工反馈闭环。
+**PLANNED，尚未开始。** 提供只读的合箱方案、计费重、费用明细、路线比较和预计时效；价格和限制必须由确定性 Service 计算，不能由模型生成或写入业务数据。
 
-开始前必须重新确认：数据量、隐私边界、模型提供商、成本、评估集和允许执行的工具。
+## 12. Milestone 8：Safe Action / Tool-ready Contract
 
-## 12. 禁止的捷径
+**PLANNED，尚未开始。** 为未来写操作建立 `Plan/Preview -> User Confirmation -> Execute` 边界，并加入用户身份、权限、幂等、动作快照、执行审计和重复执行保护；此里程碑本身不实现 Agent。
+
+## 13. Milestone 9：Read-only Logistics Agent
+
+**PLANNED，尚未开始。** Agent 只能通过受 RBAC 保护的后端读取包裹、订单、Shipment 和 Tracking，不能直接访问数据库或执行写操作。
+
+## 14. Milestone 10：Planning Agent
+
+**PLANNED，尚未开始。** Agent 调用确定性的 Route、Restriction、Consolidation Planning 和 Quote 能力，输出预算、时效和风险比较建议。
+
+## 15. Milestone 11：Human-approved Action Agent
+
+**PLANNED，尚未开始。** Agent 只能生成动作预览；只有产品内的明确用户确认才能通过 Safe Action Layer 执行一次业务动作。
+
+## 16. Milestone 12：Exception Agent
+
+**PLANNED，尚未开始。** 读取异常和 SOP，生成处置建议；高风险动作仍须经过人工确认和安全动作层。
+
+## 17. Milestone 13：Agent Evaluation
+
+**PLANNED，尚未开始。** 建立场景集与安全评估，包括工具调用成功率、参数错误、权限绕过、确认正确率、成本和人工接管率。
+
+## 18. 禁止的捷径
 
 - 不把 `localStorage` 数据当作服务端审计记录。
 - 不把大模型输出直接写入订单价格或状态。
@@ -445,7 +433,7 @@ backend/
 - 不把未完成的规划模块写入“Features implemented”。
 - 不删除失败测试、放宽断言或修改测试数据来掩盖行为变化。
 
-## 13. 里程碑完成报告模板
+## 19. 里程碑完成报告模板
 
 ```text
 里程碑：M__

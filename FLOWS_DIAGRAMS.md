@@ -123,53 +123,52 @@ TODO → IN_PROGRESS → DONE
 
 ### 7.1 订单和包裹关系
 
-当前 `orders.parcel_ids` 是 JSON 列表。目标是使用 `order_parcels` 关系表，从而支持：
-
-```text
-包裹入库 → 可选包裹池 → 加入订单 → 订单拆分/合并 → 出库
-                         ↘ 释放/重新分配
-```
+当前 `order_parcels` 已是订单与包裹的规范化主关系；`orders.parcel_ids` 仅为 API 兼容字段。一个 Package 当前只能属于一个 Order。未来拆单、合单和多箱不属于 M5。
 
 ### 7.2 出库和运输事件
 
+**M5 已确认设计，尚未实现。** `Order` 继续是集运/仓库履约订单。M5 中 `COMPLETED` 固定表示“仓库履约完成，并已经创建对应 Shipment”，不表示签收。
+
 ```mermaid
 flowchart TD
-    A[READY_TO_SHIP] --> B[创建 shipment]
-    B --> C[生成承运商/转运单号]
-    C --> D[出库确认]
-    D --> E[运输中]
-    E --> F[派送中]
-    F --> G[已签收]
-    E --> X[异常/延误]
-    X --> Y[人工处理或重新安排]
+    A[Order READY_TO_SHIP] -->|原子创建 Shipment| B[Shipment READY_FOR_DISPATCH]
+    B -->|同时：Order COMPLETED / Task DONE| C[等待出库]
+    C -->|DISPATCHED event；写 Package shipped_at| D[Shipment DISPATCHED]
+    D --> E[Shipment IN_TRANSIT]
+    E --> F[ARRIVED_AT_HUB event]
+    E --> G[Shipment OUT_FOR_DELIVERY]
+    G --> H[Shipment DELIVERED]
+    E --> I[DELAYED / CUSTOMS_HOLD / TRANSPORT_EXCEPTION event]
 ```
 
-目标新增 `shipments`、`shipment_events`、`exceptions` 等模型后，订单完成和包裹签收才可以被准确区分。
+M5 新增 `shipments`、`shipment_events` 以及基本 Tracking 查询/展示。一个 Order 只能有一个 Shipment；Package 保持既有仓内状态，不新增运输状态。M5 只追加顺序模拟事件，拒绝重复和倒序事件，不接真实承运商。
 
-### 7.3 AI 运营助手
+### 7.3 后续 Agent 边界
 
 ```mermaid
 flowchart LR
-    U[员工自然语言问题] --> A[Agent / LangGraph]
-    A --> R[检索规则/知识库]
-    A --> T[调用受控业务工具]
-    T --> B[订单/包裹/运输 API]
-    B --> V[权限校验与业务规则]
+    U[认证用户] --> A[未来 Logistics Agent]
+    A --> T[受控业务工具]
+    T --> B[FastAPI Router / Service]
+    B --> V[RBAC、业务规则、事务]
     V --> DB[(业务数据库)]
-    A --> O[结构化回答/建议]
+    A --> O[结构化回答或方案]
 ```
 
-AI 只负责理解、分类、检索和推荐；订单变更、价格计算、状态流转仍由后端业务服务执行。
+M5 不实现 Agent。后续 Agent 只负责理解、查询和推荐；不得直接访问数据库。写操作必须先走 M8 的 `Plan/Preview -> User Confirmation -> Execute` 安全动作层。
 
-## 8. 推荐演进顺序
+## 8. 已确认的后续演进顺序
 
-1. 修复前后端权限和按钮错位。
-2. 补齐价格、重量和权限测试。
-3. 用 `order_parcels` 替代 JSON 包裹列表。
-4. 增加订单取消、异常和售后记录。
-5. 增加 shipment 与运输事件。
-6. 增加任务分配、装箱记录和异常上报。
-7. 实现异常分类或只读运营助手。
-8. 有足够运输事件数据后再做延误预测。
+Milestone 1–4.5 已完成。以下均未开始：
+
+1. M5：Shipment + Tracking。
+2. M6：Route + Restriction + Package Shipping Facts。
+3. M7：Consolidation Planning + Deterministic Quote。
+4. M8：Safe Action / Tool-ready Contract。
+5. M9：Read-only Logistics Agent。
+6. M10：Planning Agent。
+7. M11：Human-approved Action Agent。
+8. M12：Exception Agent。
+9. M13：Agent Evaluation。
 
 长期目标架构见 [ARCHITECTURE_ROADMAP.md](ARCHITECTURE_ROADMAP.md)。

@@ -219,13 +219,9 @@ These limitations are intentional to keep the project honest as an MVP:
 
 ## Planned next steps
 
-The most valuable next improvements are:
+The next approved milestone is **M5: Shipment + Tracking**. It is planned but not implemented. Its formal scope is one Shipment per Order, simulated ordered tracking events, and basic tracking display. In that future model, `Order.COMPLETED` will mean warehouse fulfillment is complete and a Shipment has been created; delivery is represented only by Shipment status.
 
-1. Keep the documented WSL/Linux Node and project Python commands as the repeatable local validation baseline.
-2. Add shipment metadata, carrier events, cancellation, and delivery confirmation.
-3. Add database migrations when SQLite schema changes require controlled rollout.
-4. Add task assignment, warehouse exception handling, and production file storage.
-5. Only after a reliable logistics event model exists, add a measurable AI feature such as exception classification or an operations-assistant workflow.
+The planned route after M5 is: M6 Route + Restriction + Package Shipping Facts; M7 Consolidation Planning + Deterministic Quote; M8 Safe Action / Tool-ready Contract; then Read-only, Planning, Human-approved Action, and Exception Agent milestones followed by Agent Evaluation. No carrier integration, Route, Quote, or AI/Agent capability is implemented today.
 
 ## Portfolio framing
 
