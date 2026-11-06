@@ -10,11 +10,14 @@ def list_tasks(
     conn: sqlite3.Connection,
     customer_id: Optional[int] = None,
     order_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
 ) -> List[sqlite3.Row]:
     sql = """
         SELECT t.*
         FROM tasks t
         JOIN orders o ON o.id = t.order_id
+        JOIN customers c ON c.id = o.customer_id
         WHERE 1 = 1
     """
     params: list[Any] = []
@@ -24,6 +27,12 @@ def list_tasks(
     if order_id is not None:
         sql += " AND t.order_id = ?"
         params.append(order_id)
+    if tenant_id is not None:
+        sql += " AND c.tenant_id = ?"
+        params.append(tenant_id)
+    if warehouse_id is not None:
+        sql += " AND c.warehouse_id = ?"
+        params.append(warehouse_id)
     sql += " ORDER BY t.id DESC"
     return conn.execute(sql, params).fetchall()
 

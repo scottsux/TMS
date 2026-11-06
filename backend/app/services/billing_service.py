@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from .. import config
-from ..core.permissions import ensure_customer_scope
+from ..core.permissions import ensure_customer_access
 from ..core.security import create_token, utc_now, utc_now_iso, verify_password
 from ..db.connection import get_conn
 from ..models.enums import ExceptionStatus, OrderStatus, ParcelStatus, TaskStatus, UserRole
@@ -21,7 +21,7 @@ def patch_order_price(
     conn = get_conn()
     try:
         row = get_order_or_404(conn, oid)
-        ensure_customer_scope(user, row["customer_id"])
+        ensure_customer_access(conn, user, row["customer_id"])
         if row["status"] != OrderStatus.COMPLETED.value:
             raise HTTPException(status_code=400, detail="only completed orders can be priced")
         ensure_no_open_exceptions(conn, oid)
@@ -60,7 +60,7 @@ def patch_order_volumetric(
     conn = get_conn()
     try:
         row = get_order_or_404(conn, oid)
-        ensure_customer_scope(user, row["customer_id"])
+        ensure_customer_access(conn, user, row["customer_id"])
         ensure_weight_update_allowed(row, user)
         forwarding = decode_json(row["forwarding"]) or {}
         forwarding["volumetric_weight"] = float(body.volumetric_weight)
@@ -87,7 +87,7 @@ def patch_order_actual_weight(
     conn = get_conn()
     try:
         row = get_order_or_404(conn, oid)
-        ensure_customer_scope(user, row["customer_id"])
+        ensure_customer_access(conn, user, row["customer_id"])
         ensure_weight_update_allowed(row, user)
         forwarding = decode_json(row["forwarding"]) or {}
         forwarding["actual_weight"] = float(body.actual_weight)
@@ -114,7 +114,7 @@ def override_price(
     conn = get_conn()
     try:
         row = get_order_or_404(conn, oid)
-        ensure_customer_scope(user, row["customer_id"])
+        ensure_customer_access(conn, user, row["customer_id"])
         if row["status"] != OrderStatus.COMPLETED.value:
             raise HTTPException(status_code=400, detail="only completed orders can be repriced")
         ensure_no_open_exceptions(conn, oid)

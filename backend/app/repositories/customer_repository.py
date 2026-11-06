@@ -11,12 +11,20 @@ def list_customers(
     page: int = 1,
     page_size: int = 50,
     query: Optional[str] = None,
+    tenant_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
 ) -> List[sqlite3.Row]:
     sql = "SELECT * FROM customers WHERE 1 = 1"
     params: list[Any] = []
     if query:
         sql += " AND lower(name) LIKE ?"
         params.append(f"%{query.lower()}%")
+    if tenant_id is not None:
+        sql += " AND tenant_id = ?"
+        params.append(tenant_id)
+    if warehouse_id is not None:
+        sql += " AND warehouse_id = ?"
+        params.append(warehouse_id)
     sql += " ORDER BY id LIMIT ? OFFSET ?"
     params.extend([page_size, max(0, (page - 1) * page_size)])
     return conn.execute(sql, params).fetchall()

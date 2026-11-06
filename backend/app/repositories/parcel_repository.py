@@ -65,17 +65,25 @@ def list_parcels(
     status: Optional[ParcelStatus] = None,
     page: int = 1,
     page_size: int = 50,
+    tenant_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
 ) -> List[sqlite3.Row]:
     sql = """
         SELECT p.*, c.name AS customer_name
         FROM parcels p
-        LEFT JOIN customers c ON c.id = p.customer_id
+        JOIN customers c ON c.id = p.customer_id
         WHERE 1 = 1
     """
     params: list[Any] = []
     if customer_id is not None:
         sql += " AND p.customer_id = ?"
         params.append(customer_id)
+    if tenant_id is not None:
+        sql += " AND c.tenant_id = ?"
+        params.append(tenant_id)
+    if warehouse_id is not None:
+        sql += " AND c.warehouse_id = ?"
+        params.append(warehouse_id)
     if status is not None:
         sql += " AND p.status = ?"
         params.append(status.value)

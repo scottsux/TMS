@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from .. import config
-from ..core.permissions import ensure_customer_scope
+from ..core.permissions import ensure_customer_access
 from ..core.security import create_token, utc_now, utc_now_iso, verify_password
 from ..db.connection import get_conn
 from ..models.enums import ExceptionStatus, OrderStatus, ParcelStatus, TaskStatus, UserRole
@@ -14,9 +14,9 @@ from ..schemas import *  # noqa: F403
 from .order_rules import ensure_no_open_exceptions, ensure_weight_update_allowed, exception_types_for_role, price_formula, record_order_audit
 
 def create_parcel(body: ParcelCreate, user: sqlite3.Row):
-    ensure_customer_scope(user, body.customer_id)
     conn = get_conn()
     try:
+        ensure_customer_access(conn, user, body.customer_id)
         ensure_customer_exists(conn, body.customer_id)
         ensure_unique_tracking(conn, body.tracking_number)
         parcel_id = parcel_repository.insert_parcel(
@@ -42,6 +42,7 @@ def patch_parcel_status(
     conn = get_conn()
     try:
         row = get_parcel_or_404(conn, pid)
+        ensure_customer_access(conn, user, row["customer_id"])
         ensure_transition(ParcelStatus(row["status"]), body.status)
         now = utc_now_iso()
         updates = {
@@ -79,11 +80,23 @@ def list_parcels(
 ):
     conn = get_conn()
     try:
-        effective_customer_id = customer_id
-        if user["role"] == UserRole.customer.value:
-            effective_customer_id = user["customer_id"]
-        rows = parcel_repository.list_parcels(conn, effective_customer_id, status, page, page_size)
+        effective_customer_id = user["customer_id"] if user["role"] == UserRole.customer.value else customer_id
+        rows = parcel_repository.list_parcels(
+            conn, effective_customer_id, status, page, page_size,
+            tenant_id=user["tenant_id"],
+            warehouse_id=user["warehouse_id"] if user["role"] == UserRole.operator.value else None,
+        )
         return [row_to_parcel(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_parcel(pid: int, user: sqlite3.Row):
+    conn = get_conn()
+    try:
+        row = get_parcel_or_404(conn, pid)
+        ensure_customer_access(conn, user, row["customer_id"])
+        return row_to_parcel(row)
     finally:
         conn.close()
 
@@ -93,9 +106,9 @@ def parcels_by_customer(
     user: sqlite3.Row,
     status: Optional[ParcelStatus] = None,
 ):
-    ensure_customer_scope(user, cid)
     conn = get_conn()
     try:
+        ensure_customer_access(conn, user, cid)
         rows = parcel_repository.list_customer_parcels(conn, cid, status)
         return [row_to_parcel(row) for row in rows]
     finally:
@@ -110,7 +123,7 @@ async def upload_parcel_files(
     conn = get_conn()
     try:
         parcel = get_parcel_or_404(conn, pid)
-        ensure_customer_scope(user, parcel["customer_id"])
+        ensure_customer_access(conn, user, parcel["customer_id"])
     finally:
         conn.close()
     if len(files) > 5:

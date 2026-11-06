@@ -49,6 +49,7 @@ def b64url_decode(data: str) -> bytes:
 def create_token(user_row: sqlite3.Row) -> str:
     payload = {
         "sub": user_row["id"], "role": user_row["role"], "customer_id": user_row["customer_id"],
+        "tenant_id": user_row["tenant_id"], "warehouse_id": user_row["warehouse_id"],
         "exp": int((utc_now() + timedelta(hours=config.TOKEN_TTL_HOURS)).timestamp()),
     }
     body = b64url_encode(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))

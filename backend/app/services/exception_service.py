@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from .. import config
-from ..core.permissions import ensure_customer_scope
+from ..core.permissions import ensure_customer_access
 from ..core.security import create_token, utc_now, utc_now_iso, verify_password
 from ..db.connection import get_conn
 from ..models.enums import ExceptionStatus, OrderStatus, ParcelStatus, TaskStatus, UserRole
@@ -21,7 +21,7 @@ def create_order_exception(
     conn = get_conn()
     try:
         order = get_order_or_404(conn, oid)
-        ensure_customer_scope(user, order["customer_id"])
+        ensure_customer_access(conn, user, order["customer_id"])
         role = UserRole(user["role"])
         if body.type not in exception_types_for_role(role):
             raise HTTPException(status_code=403, detail="exception type is not allowed for this role")
@@ -55,7 +55,7 @@ def list_order_exceptions(
     conn = get_conn()
     try:
         order = get_order_or_404(conn, oid)
-        ensure_customer_scope(user, order["customer_id"])
+        ensure_customer_access(conn, user, order["customer_id"])
         rows = exception_repository.list_for_order(conn, oid)
         return [dict(row) for row in rows]
     finally:
@@ -68,11 +68,33 @@ def list_exceptions(
 ):
     conn = get_conn()
     try:
-        effective_customer_id = None
-        if user["role"] == UserRole.customer.value:
-            effective_customer_id = user["customer_id"]
-        rows = exception_repository.list_all(conn, effective_customer_id, status)
+        effective_customer_id = user["customer_id"] if user["role"] == UserRole.customer.value else None
+        rows = exception_repository.list_all(
+            conn, effective_customer_id, status,
+            tenant_id=user["tenant_id"],
+            warehouse_id=user["warehouse_id"] if user["role"] == UserRole.operator.value else None,
+        )
         return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_exception(eid: int, user: sqlite3.Row):
+    conn = get_conn()
+    try:
+        exception = exception_repository.get_by_id(conn, eid)
+        if not exception:
+            raise HTTPException(status_code=404, detail="order exception not found")
+        order = get_order_or_404(conn, exception["order_id"])
+        ensure_customer_access(conn, user, order["customer_id"])
+        return {
+            "id": exception["id"],
+            "order_id": exception["order_id"],
+            "type": exception["type"],
+            "status": exception["status"],
+            "created_at": exception["created_at"],
+            "resolved_at": exception["resolved_at"],
+        }
     finally:
         conn.close()
 
@@ -87,6 +109,8 @@ def resolve_order_exception(
         exception = exception_repository.get_by_id(conn, eid)
         if not exception:
             raise HTTPException(status_code=404, detail="order exception not found")
+        order = get_order_or_404(conn, exception["order_id"])
+        ensure_customer_access(conn, user, order["customer_id"])
         if exception["status"] != ExceptionStatus.OPEN.value:
             raise HTTPException(status_code=400, detail="exception is already resolved")
         resolved_at = utc_now_iso()
@@ -120,7 +144,7 @@ def list_order_audits(
     conn = get_conn()
     try:
         order = get_order_or_404(conn, oid)
-        ensure_customer_scope(user, order["customer_id"])
+        ensure_customer_access(conn, user, order["customer_id"])
         rows = audit_repository.list_for_order(conn, oid)
         items = []
         for row in rows:

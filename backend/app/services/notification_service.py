@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from .. import config
-from ..core.permissions import ensure_customer_scope
+from ..core.permissions import ensure_customer_access
 from ..core.security import create_token, utc_now, utc_now_iso, verify_password
 from ..db.connection import get_conn
 from ..models.enums import ExceptionStatus, OrderStatus, ParcelStatus, TaskStatus, UserRole
@@ -23,6 +23,7 @@ def notify_ready(
 ):
     conn = get_conn()
     try:
+        ensure_customer_access(conn, user, body.customer_id)
         payload = {"customer_id": body.customer_id, "message": body.message or "ready", "ts": utc_now_iso()}
         upsert_notification(conn, "ready_to_ship", body.customer_id, payload)
         conn.commit()
@@ -37,6 +38,7 @@ def notify_shipped(
 ):
     conn = get_conn()
     try:
+        ensure_customer_access(conn, user, body.customer_id)
         payload = {"customer_id": body.customer_id, "message": body.message or "shipped", "ts": utc_now_iso()}
         upsert_notification(conn, "shipped", body.customer_id, payload)
         conn.commit()
@@ -49,9 +51,9 @@ def notify_ready_to_pack(
     body: ReadyNotify,
     user: sqlite3.Row,
 ):
-    ensure_customer_scope(user, body.customer_id)
     conn = get_conn()
     try:
+        ensure_customer_access(conn, user, body.customer_id)
         ensure_customer_exists(conn, body.customer_id)
         now = utc_now()
         payload = {
@@ -135,13 +137,18 @@ def get_notifications(
 ):
     conn = get_conn()
     try:
-        effective_customer_id = customer_id
-        if user["role"] == UserRole.customer.value:
-            effective_customer_id = user["customer_id"]
+        effective_customer_id = user["customer_id"] if user["role"] == UserRole.customer.value else customer_id
+        if effective_customer_id is not None:
+            ensure_customer_access(conn, user, effective_customer_id)
+        warehouse_id = user["warehouse_id"] if user["role"] == UserRole.operator.value else None
         if type:
-            rows = notification_repository.list_notifications(conn, type, effective_customer_id)
+            rows = notification_repository.list_notifications(
+                conn, type, effective_customer_id, user["tenant_id"], warehouse_id
+            )
         else:
-            rows = notification_repository.list_notifications(conn, None, effective_customer_id)
+            rows = notification_repository.list_notifications(
+                conn, None, effective_customer_id, user["tenant_id"], warehouse_id
+            )
         items = [decode_json(row["payload"]) for row in rows]
         if type:
             return items
@@ -159,7 +166,12 @@ def clear_notifications(
 ):
     conn = get_conn()
     try:
-        notification_repository.delete_notifications(conn, type)
+        notification_repository.delete_notifications(
+            conn,
+            type,
+            user["tenant_id"],
+            user["warehouse_id"] if user["role"] == UserRole.operator.value else None,
+        )
         conn.commit()
         return {"ok": True}
     finally:

@@ -41,7 +41,7 @@ receipt.
 
 ## Features implemented
 
-- **Authentication and API authorization:** email/password login, PBKDF2 password verification, signed HMAC token, and server-side role checks.
+- **Authentication and API authorization:** email/password login, PBKDF2 password verification, signed HMAC token, server-side role checks, company (`tenant`) scope, and operator warehouse scope.
 - **Parcel intake:** unique tracking-number validation, customer-scoped parcel access, parcel status updates, and image-upload validation (up to five PNG/JPEG/WebP files, 5 MB each).
 - **Order consolidation:** use the canonical `order_parcels` relation table to create, add, remove, and release parcel assignments; each parcel can belong to only one order. The legacy `parcel_ids` response field remains synchronized for compatibility.
 - **Warehouse task flow:** create one packing task per order, start packing, record actual weight, and synchronize task/order/parcel states.
@@ -93,7 +93,13 @@ workflow in one SQLite transaction, but do not execute domain SQL directly.
 
 ## Data model and workflow states
 
-The application initializes the following SQLite tables: `customers`, `users`, `parcels`, `orders`, `order_parcels`, `tasks`, `notifications`, `order_exceptions`, and `order_audits`.
+The application initializes the following SQLite tables: `tenants`, `warehouses`, `customers`, `users`, `parcels`, `orders`, `order_parcels`, `tasks`, `notifications`, `order_exceptions`, and `order_audits`. Customers belong to a tenant and warehouse; staff users belong to a tenant; operator users must also belong to a warehouse. Customers' login scopes are derived from their assigned customer record.
+
+Tenant and warehouse setup is currently managed through a local administrative command, not a web UI. Run it from the repository root using `backend/.venv/bin/python -m backend.manage_scope --help`. It can create tenants/warehouses and assign existing customer and user records. Warehouse assignments must belong to the selected tenant; SQLite triggers enforce this invariant as a second boundary. Reassigning a customer changes the scope for its existing orders, parcels, tasks, exceptions, and notifications because those records inherit scope through `customer_id`.
+
+### Controlled integration read API
+
+Read-only integration routes use the existing Bearer Token authentication, permissions, and tenant/warehouse scope. They return dedicated field-filtered DTOs and do not expose parcel free-text description/note, customer identity fields, order forwarding/consignee details or price, or exception reason/resolution notes and staff emails. Available routes are `GET /integration/v1/parcels`, `GET /integration/v1/parcels/{id}`, `GET /integration/v1/orders`, `GET /integration/v1/orders/{id}`, `GET /integration/v1/exceptions`, and `GET /integration/v1/exceptions/{id}`. List routes support status and pagination; parcel/order lists optionally accept `customer_id`, which is constrained by the authenticated user's scope. These routes are a controlled API surface only; no Agent runtime or write Tool is connected.
 
 Current workflow states are intentionally small and explicit:
 

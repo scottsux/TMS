@@ -27,21 +27,43 @@ def list_notifications(
     conn: sqlite3.Connection,
     notification_type: Optional[str] = None,
     customer_id: Optional[int] = None,
+    tenant_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
 ) -> List[sqlite3.Row]:
-    sql = "SELECT * FROM notifications WHERE 1 = 1"
+    sql = "SELECT n.* FROM notifications n JOIN customers c ON c.id = n.customer_id WHERE 1 = 1"
     params: list[Any] = []
     if notification_type:
         sql += " AND type = ?"
         params.append(notification_type)
     if customer_id is not None:
-        sql += " AND customer_id = ?"
+        sql += " AND n.customer_id = ?"
         params.append(customer_id)
+    if tenant_id is not None:
+        sql += " AND c.tenant_id = ?"
+        params.append(tenant_id)
+    if warehouse_id is not None:
+        sql += " AND c.warehouse_id = ?"
+        params.append(warehouse_id)
     sql += " ORDER BY created_at DESC"
     return conn.execute(sql, params).fetchall()
 
 
-def delete_notifications(conn: sqlite3.Connection, notification_type: Optional[str] = None) -> None:
+def delete_notifications(
+    conn: sqlite3.Connection,
+    notification_type: Optional[str] = None,
+    tenant_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
+) -> None:
+    sql = "DELETE FROM notifications WHERE customer_id IN (SELECT id FROM customers WHERE 1 = 1"
+    params: list[Any] = []
+    if tenant_id is not None:
+        sql += " AND tenant_id = ?"
+        params.append(tenant_id)
+    if warehouse_id is not None:
+        sql += " AND warehouse_id = ?"
+        params.append(warehouse_id)
+    sql += ")"
     if notification_type:
-        conn.execute("DELETE FROM notifications WHERE type = ?", (notification_type,))
-    else:
-        conn.execute("DELETE FROM notifications")
+        sql += " AND type = ?"
+        params.append(notification_type)
+    conn.execute(sql, params)

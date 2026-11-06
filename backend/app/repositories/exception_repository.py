@@ -40,12 +40,15 @@ def list_all(
     conn: sqlite3.Connection,
     customer_id: Optional[int] = None,
     status: Optional[ExceptionStatus] = None,
+    tenant_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
 ) -> List[sqlite3.Row]:
     sql = """
         SELECT e.*, o.customer_id, o.order_no, creator.email AS created_by_email,
                resolver.email AS resolved_by_email
         FROM order_exceptions e
         JOIN orders o ON o.id = e.order_id
+        JOIN customers c ON c.id = o.customer_id
         JOIN users creator ON creator.id = e.created_by
         LEFT JOIN users resolver ON resolver.id = e.resolved_by
         WHERE 1 = 1
@@ -54,6 +57,12 @@ def list_all(
     if customer_id is not None:
         sql += " AND o.customer_id = ?"
         params.append(customer_id)
+    if tenant_id is not None:
+        sql += " AND c.tenant_id = ?"
+        params.append(tenant_id)
+    if warehouse_id is not None:
+        sql += " AND c.warehouse_id = ?"
+        params.append(warehouse_id)
     if status is not None:
         sql += " AND e.status = ?"
         params.append(status.value)

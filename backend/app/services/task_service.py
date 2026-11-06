@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 from .. import config
-from ..core.permissions import ensure_customer_scope
+from ..core.permissions import ensure_customer_access
 from ..core.security import create_token, utc_now, utc_now_iso, verify_password
 from ..db.connection import get_conn
 from ..models.enums import ExceptionStatus, OrderStatus, ParcelStatus, TaskStatus, UserRole
@@ -19,10 +19,12 @@ def list_tasks(
 ):
     conn = get_conn()
     try:
-        effective_customer_id = None
-        if user["role"] == UserRole.customer.value:
-            effective_customer_id = user["customer_id"]
-        rows = task_repository.list_tasks(conn, effective_customer_id, order_id)
+        effective_customer_id = user["customer_id"] if user["role"] == UserRole.customer.value else None
+        rows = task_repository.list_tasks(
+            conn, effective_customer_id, order_id,
+            tenant_id=user["tenant_id"],
+            warehouse_id=user["warehouse_id"] if user["role"] == UserRole.operator.value else None,
+        )
         return [row_to_task(row) for row in rows]
     finally:
         conn.close()
@@ -32,6 +34,8 @@ def start_task(tid: int, user: sqlite3.Row):
     conn = get_conn()
     try:
         task = get_task_or_404(conn, tid)
+        order = get_order_or_404(conn, task["order_id"])
+        ensure_customer_access(conn, user, order["customer_id"])
         if task["status"] != TaskStatus.TODO.value:
             raise HTTPException(status_code=400, detail="task is not in TODO status")
         task_repository.mark_started(conn, tid, TaskStatus.IN_PROGRESS.value)
@@ -50,9 +54,10 @@ def complete_task(
     conn = get_conn()
     try:
         task = get_task_or_404(conn, tid)
+        order = get_order_or_404(conn, task["order_id"])
+        ensure_customer_access(conn, user, order["customer_id"])
         if task["status"] != TaskStatus.IN_PROGRESS.value:
             raise HTTPException(status_code=400, detail="task is not in progress")
-        order = get_order_or_404(conn, task["order_id"])
         actual_weight = float(body.actual_weight) if body.actual_weight is not None else task["actual_weight"]
         task_repository.update_completion(conn, tid, actual_weight, TaskStatus.IN_PROGRESS.value)
         order_repository.update_actual_weight_and_status(

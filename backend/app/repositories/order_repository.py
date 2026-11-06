@@ -26,6 +26,8 @@ def list_orders(
     status: Optional[OrderStatus] = None,
     page: int = 1,
     page_size: int = 50,
+    tenant_id: Optional[int] = None,
+    warehouse_id: Optional[int] = None,
 ) -> List[sqlite3.Row]:
     sql = """
         SELECT o.*, c.name AS customer_name
@@ -37,6 +39,12 @@ def list_orders(
     if customer_id is not None:
         sql += " AND o.customer_id = ?"
         params.append(customer_id)
+    if tenant_id is not None:
+        sql += " AND c.tenant_id = ?"
+        params.append(tenant_id)
+    if warehouse_id is not None:
+        sql += " AND c.warehouse_id = ?"
+        params.append(warehouse_id)
     if status is not None:
         sql += " AND o.status = ?"
         params.append(status.value)

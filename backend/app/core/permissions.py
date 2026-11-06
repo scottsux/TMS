@@ -35,3 +35,15 @@ def require_permission(permission: str):
 def ensure_customer_scope(user: sqlite3.Row, customer_id: int) -> None:
     if user["role"] == UserRole.customer.value and user["customer_id"] != customer_id:
         raise HTTPException(status_code=403, detail="forbidden")
+
+
+def ensure_customer_access(conn: sqlite3.Connection, user: sqlite3.Row, customer_id: int) -> None:
+    """Enforce tenant scope for staff and warehouse scope for operators."""
+    ensure_customer_scope(user, customer_id)
+    customer = conn.execute(
+        "SELECT tenant_id, warehouse_id FROM customers WHERE id = ?", (customer_id,)
+    ).fetchone()
+    if not customer or customer["tenant_id"] != user["tenant_id"]:
+        raise HTTPException(status_code=403, detail="forbidden")
+    if user["role"] == UserRole.operator.value and customer["warehouse_id"] != user["warehouse_id"]:
+        raise HTTPException(status_code=403, detail="forbidden")

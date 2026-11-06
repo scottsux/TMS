@@ -8,6 +8,7 @@ from .auth import router as auth_router
 from .billing import router as billing_router
 from .customers import router as customers_router
 from .exceptions import router as exceptions_router
+from .integration_read import router as integration_read_router
 from .notifications import router as notifications_router
 from .orders import router as orders_router
 from .parcels import router as parcels_router
@@ -38,3 +39,4 @@ app.include_router(exceptions_router)
 app.include_router(billing_router)
 app.include_router(notifications_router)
 app.include_router(customers_router)
+app.include_router(integration_read_router)

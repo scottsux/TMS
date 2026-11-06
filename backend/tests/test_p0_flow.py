@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import backend.main as main
+from backend import manage_scope
 from fastapi.testclient import TestClient
 
 
@@ -12,7 +13,8 @@ def fetch_user(email: str) -> sqlite3.Row:
     try:
         row = conn.execute(
             """
-            SELECT u.id, u.email, u.role, u.customer_id, c.name AS customer_name
+            SELECT u.id, u.email, u.role, u.customer_id, u.tenant_id, u.warehouse_id,
+                   c.name AS customer_name
             FROM users u
             LEFT JOIN customers c ON c.id = u.customer_id
             WHERE u.email = ?
@@ -44,6 +46,131 @@ class P0FlowTests(unittest.TestCase):
         payload = main.parse_token(res.token)
         self.assertEqual(payload["role"], "customer")
         self.assertEqual(payload["customer_id"], 1)
+        self.assertEqual(payload["tenant_id"], self.customer_user["tenant_id"])
+        self.assertEqual(payload["warehouse_id"], self.customer_user["warehouse_id"])
+
+    def test_existing_database_gets_default_tenant_and_warehouse(self):
+        legacy_path = Path(self.tempdir.name) / "legacy.db"
+        conn = sqlite3.connect(legacy_path)
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY, email TEXT NOT NULL, password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL, customer_id INTEGER
+                );
+                INSERT INTO customers (id, name) VALUES (1, 'Legacy Customer');
+                INSERT INTO users (id, email, password_hash, role, customer_id)
+                    VALUES (1, 'legacy@example.com', 'unused', 'customer', 1);
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        main.configure_paths(db_path=legacy_path)
+        main.init_db()
+        conn = main.get_conn()
+        try:
+            customer = conn.execute("SELECT * FROM customers WHERE id = 1").fetchone()
+            user = conn.execute("SELECT * FROM users WHERE id = 1").fetchone()
+            tenant_count = conn.execute("SELECT COUNT(*) AS n FROM tenants").fetchone()["n"]
+            warehouse_count = conn.execute("SELECT COUNT(*) AS n FROM warehouses").fetchone()["n"]
+        finally:
+            conn.close()
+
+        self.assertEqual(tenant_count, 1)
+        self.assertEqual(warehouse_count, 1)
+        self.assertIsNotNone(customer["tenant_id"])
+        self.assertIsNotNone(customer["warehouse_id"])
+        self.assertEqual(user["tenant_id"], customer["tenant_id"])
+        self.assertEqual(user["warehouse_id"], customer["warehouse_id"])
+
+    def test_migration_fills_missing_warehouse_without_changing_existing_tenant(self):
+        conn = main.get_conn()
+        try:
+            conn.executescript(
+                "DROP TRIGGER customers_scope_insert; DROP TRIGGER users_scope_insert;"
+            )
+            conn.execute("INSERT INTO tenants (name) VALUES ('Partial Tenant')")
+            tenant_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO customers (name, tenant_id, warehouse_id) VALUES (?, ?, NULL)",
+                ("Partial Customer", tenant_id),
+            )
+            customer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO users (email, password_hash, role, customer_id, tenant_id, warehouse_id) "
+                "VALUES ('partial-staff@example.com', 'unused', 'staff', NULL, ?, NULL)",
+                (tenant_id,),
+            )
+            user_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.commit()
+        finally:
+            conn.close()
+
+        main.init_db()
+        conn = main.get_conn()
+        try:
+            customer = conn.execute("SELECT * FROM customers WHERE id = ?", (customer_id,)).fetchone()
+            user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            warehouse = conn.execute(
+                "SELECT tenant_id FROM warehouses WHERE id = ?", (customer["warehouse_id"],)
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertEqual(customer["tenant_id"], tenant_id)
+        self.assertIsNotNone(customer["warehouse_id"])
+        self.assertEqual(user["tenant_id"], tenant_id)
+        self.assertIsNotNone(user["warehouse_id"])
+        self.assertEqual(warehouse["tenant_id"], tenant_id)
+
+    def test_scope_admin_commands_create_and_assign_valid_memberships(self):
+        tenant_id = manage_scope.create_tenant("Managed Company")
+        self.assertEqual(manage_scope.create_tenant("Managed Company"), tenant_id)
+        warehouse_id = manage_scope.create_warehouse(tenant_id, "Managed Warehouse")
+        manage_scope.assign_customer(2, tenant_id, warehouse_id)
+        manage_scope.assign_user(
+            "customer@example.com", "customer", tenant_id, warehouse_id, customer_id=2
+        )
+        manage_scope.assign_user("operator@example.com", "operator", tenant_id, warehouse_id)
+
+        customer = fetch_user("customer@example.com")
+        operator = fetch_user("operator@example.com")
+        self.assertEqual(customer["customer_id"], 2)
+        self.assertEqual(customer["tenant_id"], tenant_id)
+        self.assertEqual(customer["warehouse_id"], warehouse_id)
+        self.assertEqual(operator["tenant_id"], tenant_id)
+        self.assertEqual(operator["warehouse_id"], warehouse_id)
+
+        with self.assertRaisesRegex(ValueError, "does not belong"):
+            manage_scope.assign_customer(1, tenant_id, self.customer_user["warehouse_id"])
+
+    def test_database_rejects_customer_and_user_cross_tenant_warehouse_links(self):
+        conn = main.get_conn()
+        try:
+            conn.execute("INSERT INTO tenants (name) VALUES ('Trigger Tenant')")
+            other_tenant_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO warehouses (tenant_id, name) VALUES (?, 'Trigger Warehouse')",
+                (other_tenant_id,),
+            )
+            other_warehouse_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO customers (name, tenant_id, warehouse_id) VALUES (?, ?, ?)",
+                    ("Invalid Customer", self.staff_user["tenant_id"], other_warehouse_id),
+                )
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute(
+                    "UPDATE users SET tenant_id = ?, warehouse_id = ? WHERE id = ?",
+                    (self.staff_user["tenant_id"], other_warehouse_id, self.staff_user["id"]),
+                )
+            conn.rollback()
+        finally:
+            conn.close()
 
     def test_ready_to_pack_to_ship_flow(self):
         parcel = main.patch_parcel_status(
@@ -149,6 +276,169 @@ class PermissionApiTests(unittest.TestCase):
         self.assertEqual(orders.status_code, 200)
         self.assertEqual(tasks.status_code, 403)
 
+    def test_controlled_read_api_requires_auth_and_enforces_resource_scope(self):
+        self.assertEqual(self.client.get("/integration/v1/parcels").status_code, 401)
+        customer_id, parcel_id, other_staff, _ = self.create_scoped_fixture()
+        order = self.client.post(
+            "/orders",
+            headers=self.auth_header(other_staff),
+            json={"customer_id": customer_id, "parcel_ids": [parcel_id]},
+        )
+        self.assertEqual(order.status_code, 200)
+        order_id = order.json()["id"]
+        exception = self.client.post(
+            f"/orders/{order_id}/exceptions",
+            headers=self.auth_header(other_staff),
+            json={"type": "DAMAGED", "reason": "foreign exception"},
+        )
+        self.assertEqual(exception.status_code, 200)
+        exception_id = exception.json()["id"]
+
+        self.assertEqual(
+            self.client.get(
+                f"/integration/v1/parcels/{parcel_id}", headers=self.auth_header(self.staff_user)
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/integration/v1/orders/{order_id}", headers=self.auth_header(self.staff_user)
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/integration/v1/exceptions/{exception_id}", headers=self.auth_header(self.staff_user)
+            ).status_code,
+            403,
+        )
+
+        conn = main.get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO warehouses (tenant_id, name) VALUES (?, 'Read API Other Warehouse')",
+                (self.staff_user["tenant_id"],),
+            )
+            other_warehouse_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO customers (name, tenant_id, warehouse_id) VALUES (?, ?, ?)",
+                ("Read API Warehouse Customer", self.staff_user["tenant_id"], other_warehouse_id),
+            )
+            other_customer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO parcels (customer_id, tracking_number, status) VALUES (?, ?, ?)",
+                (other_customer_id, "READ-API-OTHER-WH", main.ParcelStatus.IN_TRANSIT.value),
+            )
+            same_tenant_parcel = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.commit()
+        finally:
+            conn.close()
+        operator_scope = self.client.get(
+            f"/integration/v1/parcels/{same_tenant_parcel}",
+            headers=self.auth_header(self.operator_user),
+        )
+        self.assertEqual(operator_scope.status_code, 403)
+
+    def test_controlled_read_api_ignores_forged_scope_query_and_filters_sensitive_fields(self):
+        parcel = self.client.post(
+            "/parcels",
+            headers=self.auth_header(self.staff_user),
+            json={
+                "customer_id": self.customer_user["customer_id"],
+                "tracking_number": "SAFE-READ-1",
+                "courier_company": "Carrier",
+                "item_category": "clothing",
+                "item_description": "PRIVATE_DESCRIPTION_SENTINEL",
+                "note": "PRIVATE_PARCEL_NOTE_SENTINEL",
+            },
+        )
+        self.assertEqual(parcel.status_code, 200)
+        parcel_id = parcel.json()["id"]
+        order = self.client.post(
+            "/orders",
+            headers=self.auth_header(self.staff_user),
+            json={"customer_id": self.customer_user["customer_id"], "parcel_ids": [parcel_id]},
+        )
+        self.assertEqual(order.status_code, 200)
+        order_id = order.json()["id"]
+        conn = main.get_conn()
+        try:
+            conn.execute(
+                "UPDATE orders SET final_price = ?, forwarding = ? WHERE id = ?",
+                (123.45, '{"consignee_name":"PRIVATE_NAME_SENTINEL","consignee_phone":"PRIVATE_PHONE_SENTINEL",'
+                 '"consignee_address":"PRIVATE_ADDRESS_SENTINEL"}', order_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        exception = self.client.post(
+            f"/orders/{order_id}/exceptions",
+            headers=self.auth_header(self.staff_user),
+            json={"type": "DAMAGED", "reason": "PRIVATE_EXCEPTION_REASON_SENTINEL"},
+        )
+        self.assertEqual(exception.status_code, 200)
+        exception_id = exception.json()["id"]
+
+        forged_scope = "?customer_id=2&tenant_id=999999&warehouse_id=999999&user_id=999999&role=staff"
+        parcel_list = self.client.get(
+            "/integration/v1/parcels" + forged_scope,
+            headers=self.auth_header(self.customer_user),
+        )
+        parcel_detail = self.client.get(
+            f"/integration/v1/parcels/{parcel_id}", headers=self.auth_header(self.customer_user)
+        )
+        order_list = self.client.get(
+            "/integration/v1/orders" + forged_scope,
+            headers=self.auth_header(self.customer_user),
+        )
+        order_detail = self.client.get(
+            f"/integration/v1/orders/{order_id}", headers=self.auth_header(self.customer_user)
+        )
+        exception_list = self.client.get(
+            "/integration/v1/exceptions", headers=self.auth_header(self.customer_user)
+        )
+        exception_detail = self.client.get(
+            f"/integration/v1/exceptions/{exception_id}", headers=self.auth_header(self.customer_user)
+        )
+        for response in (parcel_list, parcel_detail, order_list, order_detail, exception_list, exception_detail):
+            self.assertEqual(response.status_code, 200)
+
+        own_parcels = self.client.get("/parcels", headers=self.auth_header(self.customer_user))
+        own_orders = self.client.get("/orders", headers=self.auth_header(self.customer_user))
+        self.assertEqual(own_parcels.status_code, 200)
+        self.assertEqual(own_orders.status_code, 200)
+        self.assertEqual(
+            {item["id"] for item in parcel_list.json()}, {item["id"] for item in own_parcels.json()}
+        )
+        self.assertIn(parcel_id, {item["id"] for item in parcel_list.json()})
+        self.assertEqual(
+            {item["id"] for item in order_list.json()}, {item["id"] for item in own_orders.json()}
+        )
+        self.assertIn(order_id, {item["id"] for item in order_list.json()})
+        self.assertEqual([item["id"] for item in exception_list.json()], [exception_id])
+        self.assertEqual(
+            set(parcel_detail.json()),
+            {"id", "tracking_number", "status", "courier_company", "item_category", "arrived_at",
+             "pack_requested_at", "packed_at", "shipped_at"},
+        )
+        self.assertEqual(
+            set(order_detail.json()),
+            {"id", "order_no", "status", "parcel_ids", "actual_weight", "volumetric_weight", "created_at"},
+        )
+        self.assertEqual(
+            set(exception_detail.json()),
+            {"id", "order_id", "type", "status", "created_at", "resolved_at"},
+        )
+        response_text = str(
+            [parcel_list.json(), parcel_detail.json(), order_list.json(), order_detail.json(),
+             exception_list.json(), exception_detail.json()]
+        )
+        for sensitive_value in (
+            "PRIVATE_DESCRIPTION_SENTINEL", "PRIVATE_PARCEL_NOTE_SENTINEL", "PRIVATE_NAME_SENTINEL",
+            "PRIVATE_PHONE_SENTINEL", "PRIVATE_ADDRESS_SENTINEL", "PRIVATE_EXCEPTION_REASON_SENTINEL",
+        ):
+            self.assertNotIn(sensitive_value, response_text)
+
     def test_staff_can_view_tasks_but_cannot_start_them(self):
         tasks = self.client.get("/tasks", headers=self.auth_header(self.staff_user))
         start = self.client.patch("/tasks/1/start", headers=self.auth_header(self.staff_user))
@@ -160,6 +450,245 @@ class PermissionApiTests(unittest.TestCase):
         ship = self.client.patch("/orders/1/ship", headers=self.auth_header(self.operator_user))
         self.assertEqual(tasks.status_code, 200)
         self.assertEqual(ship.status_code, 403)
+
+    def create_scoped_fixture(self, same_tenant=False):
+        conn = main.get_conn()
+        try:
+            if same_tenant:
+                tenant_id = self.staff_user["tenant_id"]
+            else:
+                conn.execute("INSERT INTO tenants (name) VALUES ('Other Company')")
+                tenant_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO warehouses (tenant_id, name) VALUES (?, 'Other Warehouse')",
+                (tenant_id,),
+            )
+            warehouse_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO customers (name, tenant_id, warehouse_id) VALUES (?, ?, ?)",
+                ("Other Tenant Customer", tenant_id, warehouse_id),
+            )
+            customer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO users (email, password_hash, role, customer_id, tenant_id, warehouse_id) "
+                "VALUES (?, ?, ?, NULL, ?, ?)",
+                ("other-staff@example.com", "unused", "staff", tenant_id, warehouse_id),
+            )
+            staff_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO users (email, password_hash, role, customer_id, tenant_id, warehouse_id) "
+                "VALUES (?, ?, ?, NULL, ?, ?)",
+                ("other-operator@example.com", "unused", "operator", tenant_id, warehouse_id),
+            )
+            operator_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO parcels (customer_id, tracking_number, status) VALUES (?, ?, ?)",
+                (customer_id, "OTHER-TENANT-PARCEL", main.ParcelStatus.IN_TRANSIT.value),
+            )
+            parcel_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.commit()
+        finally:
+            conn.close()
+        return customer_id, parcel_id, fetch_user("other-staff@example.com"), fetch_user("other-operator@example.com")
+
+    def test_staff_is_limited_to_own_tenant(self):
+        customer_id, parcel_id, other_staff, _ = self.create_scoped_fixture()
+        other_parcel = main.create_parcel(
+            main.ParcelCreate(customer_id=customer_id, tracking_number="OTHER-TENANT-NEW"),
+            user=other_staff,
+        )
+
+        listed_parcels = self.client.get("/parcels", headers=self.auth_header(self.staff_user))
+        listed_customers = self.client.get("/customers", headers=self.auth_header(self.staff_user))
+        foreign_parcel = self.client.patch(
+            f"/parcels/{parcel_id}/status",
+            headers=self.auth_header(self.staff_user),
+            json={"status": "ARRIVED"},
+        )
+        foreign_customer_create = self.client.post(
+            "/parcels",
+            headers=self.auth_header(self.staff_user),
+            json={"customer_id": customer_id, "tracking_number": "CROSS-TENANT-CREATE"},
+        )
+
+        self.assertEqual(listed_parcels.status_code, 200)
+        self.assertNotIn(parcel_id, [item["id"] for item in listed_parcels.json()])
+        self.assertEqual(listed_customers.status_code, 200)
+        self.assertNotIn(customer_id, [item["id"] for item in listed_customers.json()])
+        self.assertEqual(foreign_parcel.status_code, 403)
+        self.assertEqual(foreign_customer_create.status_code, 403)
+        self.assertGreater(other_parcel.id, 0)
+
+    def test_operator_is_limited_to_assigned_warehouse(self):
+        customer_id, parcel_id, _, other_operator = self.create_scoped_fixture(same_tenant=True)
+        other_parcel = self.client.get(
+            "/parcels", headers=self.auth_header(other_operator)
+        )
+        own_parcel = self.client.get(
+            "/parcels", headers=self.auth_header(self.operator_user)
+        )
+        foreign_parcel_update = self.client.patch(
+            f"/parcels/{parcel_id}/status",
+            headers=self.auth_header(self.operator_user),
+            json={"status": "ARRIVED"},
+        )
+        foreign_order_create = self.client.post(
+            "/orders",
+            headers=self.auth_header(self.operator_user),
+            json={"customer_id": customer_id, "parcel_ids": [parcel_id]},
+        )
+
+        self.assertEqual(other_parcel.status_code, 200)
+        self.assertIn(parcel_id, [item["id"] for item in other_parcel.json()])
+        self.assertEqual(own_parcel.status_code, 200)
+        self.assertNotIn(parcel_id, [item["id"] for item in own_parcel.json()])
+        self.assertEqual(foreign_parcel_update.status_code, 403)
+        self.assertEqual(foreign_order_create.status_code, 403)
+
+    def test_staff_cannot_access_foreign_tenant_orders_tasks_exceptions_or_billing(self):
+        customer_id, parcel_id, other_staff, _ = self.create_scoped_fixture()
+        order_response = self.client.post(
+            "/orders",
+            headers=self.auth_header(other_staff),
+            json={"customer_id": customer_id, "parcel_ids": [parcel_id]},
+        )
+        order_id = order_response.json()["id"]
+        exception_response = self.client.post(
+            f"/orders/{order_id}/exceptions",
+            headers=self.auth_header(other_staff),
+            json={"type": "DAMAGED", "reason": "test"},
+        )
+        exception_id = exception_response.json()["id"]
+        conn = main.get_conn()
+        try:
+            task_id = conn.execute("SELECT id FROM tasks WHERE order_id = ?", (order_id,)).fetchone()["id"]
+            conn.execute(
+                "UPDATE orders SET status = ?, actual_weight = 1 WHERE id = ?",
+                (main.OrderStatus.COMPLETED.value, order_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        checks = {
+            "order detail": self.client.get(f"/orders/{order_id}", headers=self.auth_header(self.staff_user)),
+            "order update": self.client.patch(
+                f"/orders/{order_id}/order_no",
+                headers=self.auth_header(self.staff_user), json={"order_no": "DENIED"},
+            ),
+            "ship": self.client.patch(f"/orders/{order_id}/ship", headers=self.auth_header(self.staff_user)),
+            "task list": self.client.get(f"/tasks?order_id={order_id}", headers=self.auth_header(self.staff_user)),
+            "exception list": self.client.get(
+                f"/orders/{order_id}/exceptions", headers=self.auth_header(self.staff_user)
+            ),
+            "exception create": self.client.post(
+                f"/orders/{order_id}/exceptions",
+                headers=self.auth_header(self.staff_user),
+                json={"type": "DAMAGED", "reason": "denied"},
+            ),
+            "exception resolve": self.client.patch(
+                f"/exceptions/{exception_id}/resolve",
+                headers=self.auth_header(self.staff_user),
+                json={"resolution_note": "denied"},
+            ),
+            "audit list": self.client.get(
+                f"/orders/{order_id}/audits", headers=self.auth_header(self.staff_user)
+            ),
+            "price": self.client.patch(
+                f"/orders/{order_id}/price",
+                headers=self.auth_header(self.staff_user),
+                json={"rate_per_kg": 1},
+            ),
+            "customer detail": self.client.get(
+                f"/customers/{customer_id}", headers=self.auth_header(self.staff_user)
+            ),
+        }
+        self.assertEqual(order_response.status_code, 200)
+        self.assertEqual(exception_response.status_code, 200)
+        self.assertGreater(task_id, 0)
+        self.assertTrue(
+            all(response.status_code == 403 for name, response in checks.items() if name != "task list"),
+            {name: response.status_code for name, response in checks.items()},
+        )
+        self.assertEqual(checks["task list"].status_code, 200)
+        self.assertNotIn(task_id, [item["id"] for item in checks["task list"].json()])
+
+    def test_operator_cannot_read_or_mutate_foreign_warehouse_order_or_task(self):
+        customer_id, parcel_id, other_staff, _ = self.create_scoped_fixture(same_tenant=True)
+        order = self.client.post(
+            "/orders",
+            headers=self.auth_header(other_staff),
+            json={"customer_id": customer_id, "parcel_ids": [parcel_id]},
+        )
+        order_id = order.json()["id"]
+        conn = main.get_conn()
+        try:
+            task_id = conn.execute("SELECT id FROM tasks WHERE order_id = ?", (order_id,)).fetchone()["id"]
+            conn.commit()
+        finally:
+            conn.close()
+
+        self.assertEqual(order.status_code, 200)
+        self.assertEqual(
+            self.client.get(f"/orders/{order_id}", headers=self.auth_header(self.operator_user)).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.patch(
+                f"/tasks/{task_id}/start", headers=self.auth_header(self.operator_user)
+            ).status_code,
+            403,
+        )
+        tasks = self.client.get("/tasks", headers=self.auth_header(self.operator_user))
+        self.assertEqual(tasks.status_code, 200)
+        self.assertNotIn(task_id, [item["id"] for item in tasks.json()])
+
+    def test_notifications_are_scoped_for_read_write_and_clear(self):
+        customer_id, _, other_staff, _ = self.create_scoped_fixture()
+        self.assertEqual(
+            self.client.post(
+                "/notify/ready_to_ship",
+                headers=self.auth_header(other_staff),
+                json={"customer_id": customer_id, "message": "foreign"},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/notifications?customer_id={customer_id}",
+                headers=self.auth_header(self.staff_user),
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/notify/shipped",
+                headers=self.auth_header(self.staff_user),
+                json={"customer_id": customer_id, "message": "cross tenant"},
+            ).status_code,
+            403,
+        )
+
+        conn = main.get_conn()
+        try:
+            foreign_before = conn.execute(
+                "SELECT COUNT(*) AS n FROM notifications WHERE customer_id = ?", (customer_id,)
+            ).fetchone()["n"]
+        finally:
+            conn.close()
+        self.assertEqual(
+            self.client.delete("/notifications", headers=self.auth_header(self.staff_user)).status_code,
+            200,
+        )
+        conn = main.get_conn()
+        try:
+            foreign_after = conn.execute(
+                "SELECT COUNT(*) AS n FROM notifications WHERE customer_id = ?", (customer_id,)
+            ).fetchone()["n"]
+        finally:
+            conn.close()
+        self.assertEqual(foreign_before, 1)
+        self.assertEqual(foreign_after, 1)
 
 
 class BusinessRuleApiTests(unittest.TestCase):
